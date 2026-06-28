@@ -1,0 +1,18 @@
+{
+  "name": "liger_085_geglu_activation_baseline",
+  "definition": "085_geglu_activation",
+  "author": "liger",
+  "description": "Liger GEGLU baseline for L1_085_geglu_activation",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nfrom liger_kernel.ops.geglu import LigerGELUMulFunction\n\n\n@torch.no_grad()\ndef run(x):\n    # x shape: (batch, seq_len, 2*intermediate_size)\n    # Split into gate and up halves\n    half = x.shape[-1] // 2\n    a, b = x[..., :half], x[..., half:]\n    return LigerGELUMulFunction.apply(a, b)\n"
+    }
+  ]
+}

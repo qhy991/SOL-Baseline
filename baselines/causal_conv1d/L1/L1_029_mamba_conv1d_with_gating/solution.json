@@ -1,0 +1,22 @@
+{
+  "name": "causal_conv1d_029_mamba_conv1d_with_gating_baseline",
+  "definition": "029_mamba_conv1d_with_gating",
+  "author": "causal_conv1d",
+  "description": "causal_conv1d baseline for L1_029_mamba_conv1d_with_gating",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nfrom causal_conv1d import causal_conv1d_fn\n\n\n@torch.no_grad()\ndef run(hidden_states, attention_mask, in_proj_weight, in_proj_bias, conv1d_weight, conv1d_bias):\n    # Reference:\n    # 1. Linear projection: (B, L, 8192) -> (B, L, 32768)\n    # 2. Transpose: (B, 32768, L)\n    # 3. Split into hidden_states_conv, gate: 2x (B, 16384, L)\n    # 4. Apply attention mask\n    # 5. Causal conv1d (depthwise)\n    # 6. SiLU activation\n    # 7. Apply attention mask\n    # Returns: (hidden_states_conv, gate)\n\n    batch, seq_len, hidden_size = hidden_states.shape\n\n    # Step 1-2: Linear projection + transpose\n    projected = torch.nn.functional.linear(hidden_states, in_proj_weight, in_proj_bias)\n    projected = projected.transpose(1, 2)  # (B, 32768, L)\n\n    # Step 3: Split\n    intermediate_size = projected.shape[1] // 2\n    hidden_states_conv, gate = projected[:, :intermediate_size], projected[:, intermediate_size:]\n\n    # Step 4: Apply attention mask\n    hidden_states_conv = hidden_states_conv * attention_mask.unsqueeze(1)\n\n    # Step 5: Causal conv1d\n    conv_w = conv1d_weight.reshape(conv1d_weight.shape[0], -1).contiguous()\n    hidden_states_conv = causal_conv1d_fn(\n        hidden_states_conv, conv_w, conv1d_bias, activation='silu'\n    )\n\n    # Step 6: Apply attention mask again\n    hidden_states_conv = hidden_states_conv * attention_mask.unsqueeze(1)\n\n    return hidden_states_conv, gate\n"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "liger_048_fused_gate_up_projection_with_swiglu_baseline",
+  "definition": "048_fused_gate_up_projection_with_swiglu",
+  "author": "liger",
+  "description": "liger baseline for L1_048_fused_gate_up_projection_with_swiglu",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nfrom liger_kernel.ops.geglu import LigerGELUMulFunction\n\n\n@torch.no_grad()\ndef run(x, gate_proj, up_proj):\n    # x: (batch, seq_len, hidden_size)\n    # gate_proj: (intermediate_size, hidden_size)\n    # up_proj: (intermediate_size, hidden_size)\n\n    # Linear projections\n    gate_output = torch.matmul(x, gate_proj.t())\n    up_output = torch.matmul(x, up_proj.t())\n\n    # LigerGELUMulFunction.apply computes: gelu(a) * b\n    return LigerGELUMulFunction.apply(gate_output, up_output)\n"
+    }
+  ]
+}

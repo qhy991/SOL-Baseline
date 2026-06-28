@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_069_rms_norm_baseline",
+  "definition": "069_rms_norm",
+  "author": "flashinfer",
+  "description": "flashinfer baseline for L1_069_rms_norm",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.norm\n\n\n@torch.no_grad()\ndef run(hidden_states, residual, weight, eps):\n    x = residual + hidden_states\n    return flashinfer.norm.rmsnorm(x, weight, eps)\n"
+    }
+  ]
+}

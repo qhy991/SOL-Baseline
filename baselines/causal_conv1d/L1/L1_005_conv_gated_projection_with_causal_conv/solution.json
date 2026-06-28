@@ -1,0 +1,22 @@
+{
+  "name": "causal_conv1d_005_conv_gated_projection_with_causal_conv_baseline",
+  "definition": "005_conv_gated_projection_with_causal_conv",
+  "author": "causal_conv1d",
+  "description": "causal_conv1d baseline for L1_005_conv_gated_projection_with_causal_conv",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nfrom causal_conv1d import causal_conv1d_fn\n\n\n@torch.no_grad()\ndef run(x, in_proj_weight, in_proj_bias, conv_weight, conv_bias, out_proj_weight, out_proj_bias):\n    # Reference:\n    # 1. Triple linear projection: BCx = linear(x, in_proj_weight, in_proj_bias)\n    # 2. Split into B, C, x_proj along channel dim\n    # 3. Bx = B * x_proj (element-wise gating)\n    # 4. Causal conv1d on Bx (depthwise)\n    # 5. y = C * conv_out (output gating)\n    # 6. Output projection: output = linear(y, out_proj_weight, out_proj_bias)\n\n    batch, seq_len, hidden_size = x.shape\n\n    # Step 1: Triple linear projection\n    BCx = torch.nn.functional.linear(x, in_proj_weight, in_proj_bias)\n    BCx = BCx.transpose(-1, -2)  # (batch, 3*hidden, seq_len)\n\n    # Step 2: Split into B, C, x_proj\n    B, C, x_proj = BCx.chunk(3, dim=1)\n\n    # Step 3: Element-wise gating\n    Bx = B * x_proj  # (batch, hidden, seq_len)\n\n    # Step 4: Causal conv1d using causal_conv1d_fn\n    # causal_conv1d_fn expects weight (dim, width)\n    # conv_weight from task: (hidden_size, 1, kernel_size)\n    conv_w = conv_weight.reshape(conv_weight.shape[0], -1).contiguous()\n    conv_out = causal_conv1d_fn(Bx, conv_w, conv_bias, activation=None)\n\n    # Step 5: Output gating\n    y = C * conv_out  # (batch, hidden, seq_len)\n\n    # Transpose back\n    y = y.transpose(-1, -2).contiguous()  # (batch, seq_len, hidden)\n\n    # Step 6: Output projection\n    output = torch.nn.functional.linear(y, out_proj_weight, out_proj_bias)\n\n    return output\n"
+    }
+  ]
+}

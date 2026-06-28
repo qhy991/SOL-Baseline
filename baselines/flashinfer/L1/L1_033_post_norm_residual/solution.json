@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_033_post_norm_residual_baseline",
+  "definition": "033_post_norm_residual",
+  "author": "flashinfer",
+  "description": "flashinfer baseline for L1_033_post_norm_residual",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.norm\n\n\n@torch.no_grad()\ndef run(sublayer_output, residual, weight, eps):\n    # Post-norm: residual + RMSNorm(sublayer_output)\n    normalized = flashinfer.norm.rmsnorm(sublayer_output, weight, eps)\n    return residual + normalized\n"
+    }
+  ]
+}
