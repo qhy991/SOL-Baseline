@@ -73,9 +73,13 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 │   └── causal_conv1d/
 │       └── L1/                 # 2 L1 causal conv baselines
 ├── docs/
-│   └── INSTALL.md              # Library installation guide
+│   ├── INSTALL.md              # Library installation guide
+│   ├── BASELINE_DESIGN.md      # Baseline design notes
+│   ├── COVERAGE_ANALYSIS.md    # Per-task coverage analysis (16 matched, 63 no-need, 156 unmatched)
+│   └── ADDITIONAL_LIBRARIES.md # Research on more SOTA libraries that could expand coverage
 ├── scripts/
-│   └── benchmark.py            # Benchmark script for SOTA vs torch comparison
+│   ├── benchmark.py            # Benchmark script for SOTA vs torch comparison
+│   └── verify.py               # Verify all baseline solutions
 └── README.md
 ```
 
