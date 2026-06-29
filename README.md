@@ -26,14 +26,14 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 
 ## Results Summary
 
-### 21 Verified Baseline Solutions
+### 25 Verified Baseline Solutions
 
-| Library | Task Count | Speedup Range |
+| Library | Task Count | Notes |
 |---|---|---|
-| **FlashInfer** | 12 | 6.7x - 14.3x (norm), passthrough+norm |
-| **Liger** | 3 | 2.2x (1 task), slower (2 tasks) |
-| **causal-conv1d** | 2 | 1.5x - 1.6x |
-| **FlashAttention + FlashInfer** | 4 | TBD (full attention blocks) |
+| **FlashInfer** | 13 | RMSNorm (11) + fused RMS+MLP + encoder norm |
+| **Liger** | 3 | GEGLU (2) + GroupNorm |
+| **causal-conv1d** | 2 | Mamba/Hyena depthwise conv |
+| **FlashAttention + FlashInfer** | 7 | **Composition of multiple SOTA libs** for full attention/decoder blocks |
 
 ### Performance (SOTA vs Torch Reference)
 
@@ -61,14 +61,21 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 | L1_085 geglu_activation | Liger | 0.116 | 0.084 | 0.7x |
 | L1_078 group_norm_fusion | Liger | 0.342 | 0.095 | 0.3x |
 
-#### Full Attention Blocks (FlashAttention + FlashInfer combo)
+#### SOTA Library Composition (FlashAttention + FlashInfer + Liger)
+
+These tasks demonstrate that **complex fused kernels can be matched by composing multiple SOTA libraries**. See [docs/COMPOSITION_METHODOLOGY.md](docs/COMPOSITION_METHODOLOGY.md) for the detailed methodology.
+
 | Task | Description | Status |
 |---|---|---|
 | L1_015 gqa_rope_qk_norm | GQA + RoPE + QK RMSNorm | ✓ 16/16 PASSED |
 | L1_073 encoder_norm_kv_projection | RMSNorm + KV projection | ✓ 16/16 PASSED |
 | L1_092 gqa_attention_with_qk_norm | Full GQA + QK norm + RoPE + Output | ✓ 16/16 PASSED |
+| L2_004 fused_residual_rms_mlp | Residual + RMSNorm + SwiGLU MLP | ✓ 16/16 PASSED |
+| L2_007 multimodal_rope_attention | GQA + 3D Multi-modal RoPE | ✓ 16/16 PASSED |
 | L2_018 cu_seqlens_vision_attention | Varlen vision attention | ⚠ 11/16 PASSED |
+| L2_020 decoder_layer_pre_post_norm | Complete decoder (complex-RoPE) | ✓ 16/16 PASSED |
 | L2_053 text_decoder_layer | Complete decoder layer (Norm+Attn+MLP) | ✓ 16/16 PASSED |
+| L2_062 decoder_complete_layer | Self-attn + Cross-attn + MLP | ✓ 16/16 PASSED |
 
 ## Directory Structure
 
@@ -76,17 +83,27 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 .
 ├── baselines/
 │   ├── flashinfer/
-│   │   ├── FlashInfer-Bench/   # 9 FlashInfer-Bench RMSNorm baselines
-│   │   └── L1/                 # 2 L1 RMSNorm baselines
+│   │   ├── FlashInfer-Bench/   # 9 RMSNorm baselines (direct API match)
+│   │   ├── L1/                 # 3 L1 RMSNorm baselines
+│   │   └── L2/                 # 1 L2 fused RMS+MLP baseline
 │   ├── liger/
 │   │   └── L1/                 # 3 L1 activation/norm baselines
-│   └── causal_conv1d/
-│       └── L1/                 # 2 L1 causal conv baselines
+│   ├── causal_conv1d/
+│   │   └── L1/                 # 2 L1 causal conv baselines
+│   └── flash_attn/             # SOTA composition baselines
+│       ├── L1/                 # 2 L1 attention block baselines
+│       └── L2/                 # 5 L2 decoder/attention block baselines
 ├── docs/
 │   ├── INSTALL.md              # Library installation guide
 │   ├── BASELINE_DESIGN.md      # Baseline design notes
-│   ├── COVERAGE_ANALYSIS.md    # Per-task coverage analysis (16 matched, 63 no-need, 156 unmatched)
-│   └── ADDITIONAL_LIBRARIES.md # Research on more SOTA libraries that could expand coverage
+│   ├── COVERAGE_ANALYSIS.md    # Per-task coverage analysis
+│   ├── ADDITIONAL_LIBRARIES.md # Research on more SOTA libraries
+│   └── COMPOSITION_METHODOLOGY.md  # ⭐ Methodology for composing SOTA libs
+│   ├── INSTALL.md              # Library installation guide
+│   ├── BASELINE_DESIGN.md      # Baseline design notes
+│   ├── COVERAGE_ANALYSIS.md    # Per-task coverage analysis
+│   ├── ADDITIONAL_LIBRARIES.md # Research on more SOTA libraries
+│   └── COMPOSITION_METHODOLOGY.md  # ⭐ Methodology for composing SOTA libs (key insight)
 ├── scripts/
 │   ├── benchmark.py            # Benchmark script for SOTA vs torch comparison
 │   └── verify.py               # Verify all baseline solutions

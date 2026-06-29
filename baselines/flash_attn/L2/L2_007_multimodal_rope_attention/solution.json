@@ -1,0 +1,18 @@
+{
+  "name": "flash_attn_007_multimodal_rope_attention_baseline",
+  "definition": "007_multimodal_rotary_embedding_attention",
+  "author": "flash_attn",
+  "description": "FlashAttention baseline for L2_007 multimodal 3D RoPE attention",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nfrom flash_attn import flash_attn_func\n\n\n@torch.no_grad()\ndef run(\n    hidden_states, q_weight, q_bias, k_weight, k_bias, v_weight, v_bias, o_weight,\n    cos, sin, attention_mask,\n):\n    num_heads = 28\n    num_kv_heads = 4\n    head_dim = 128\n    scaling = head_dim ** -0.5\n    mrope_section = [16, 24, 24]\n\n    bsz, q_len, _ = hidden_states.size()\n\n    # QKV projection\n    query_states = F.linear(hidden_states, q_weight, q_bias)\n    key_states = F.linear(hidden_states, k_weight, k_bias)\n    value_states = F.linear(hidden_states, v_weight, v_bias)\n\n    query_states = query_states.view(bsz, q_len, num_heads, head_dim).transpose(1, 2)\n    key_states = key_states.view(bsz, q_len, num_kv_heads, head_dim).transpose(1, 2)\n    value_states = value_states.view(bsz, q_len, num_kv_heads, head_dim).transpose(1, 2)\n\n    # Multi-modal 3D RoPE (keep reference implementation)\n    mrope_section_doubled = [s * 2 for s in mrope_section]\n    cos_splits = cos.split(mrope_section_doubled, dim=-1)\n    sin_splits = sin.split(mrope_section_doubled, dim=-1)\n    cos_combined = torch.cat([m[i % 3] for i, m in enumerate(cos_splits)], dim=-1).unsqueeze(1)\n    sin_combined = torch.cat([m[i % 3] for i, m in enumerate(sin_splits)], dim=-1).unsqueeze(1)\n\n    def rotate_half(x):\n        x1 = x[..., : x.shape[-1] // 2]\n        x2 = x[..., x.shape[-1] // 2 :]\n        return torch.cat((-x2, x1), dim=-1)\n\n    query_states = (query_states * cos_combined) + (rotate_half(query_states) * sin_combined)\n    key_states = (key_states * cos_combined) + (rotate_half(key_states) * sin_combined)\n\n    # FlashAttention\n    query_states = query_states.transpose(1, 2).contiguous()\n    key_states = key_states.transpose(1, 2).contiguous()\n    value_states = value_states.transpose(1, 2).contiguous()\n\n    attn_output = flash_attn_func(\n        query_states, key_states, value_states,\n        causal=True,\n        softmax_scale=scaling,\n    )\n    attn_output = attn_output.reshape(bsz, q_len, num_heads * head_dim)\n\n    output = F.linear(attn_output, o_weight)\n    return output\n"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "flashinfer_004_fused_residual_rms_mlp_baseline",
+  "definition": "004_fused_residual_rms_mlp",
+  "author": "flashinfer",
+  "description": "FlashInfer RMSNorm + SwiGLU MLP baseline",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nimport flashinfer.norm\n\n\n@torch.no_grad()\ndef run(hidden_states, residual, norm_weight, gate_proj_weight, up_proj_weight, down_proj_weight, eps):\n    # Residual + RMSNorm via FlashInfer\n    x = residual + hidden_states\n    batch, seq_len, hidden_size = x.shape\n    x_flat = x.reshape(-1, hidden_size).contiguous()\n    normed = flashinfer.norm.rmsnorm(x_flat, norm_weight, eps).reshape(batch, seq_len, hidden_size)\n\n    # SwiGLU MLP\n    gate = F.linear(normed, gate_proj_weight)\n    up = F.linear(normed, up_proj_weight)\n    intermediate = F.silu(gate) * up\n    output = F.linear(intermediate, down_proj_weight)\n    return output\n"
+    }
+  ]
+}
