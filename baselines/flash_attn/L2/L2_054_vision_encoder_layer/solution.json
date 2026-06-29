@@ -1,0 +1,18 @@
+{
+  "name": "flash_attn_054_vision_encoder_layer_baseline",
+  "definition": "054_vision_encoder_layer_with_gated_residuals",
+  "author": "flash_attn",
+  "description": "FlashAttention + FlashInfer LayerNorm baseline for L2_054 vision encoder",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nfrom flash_attn import flash_attn_func\nimport flashinfer.norm\n\n\n@torch.no_grad()\ndef run(\n    hidden_state,\n    input_layernorm_weight, input_layernorm_bias,\n    q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight,\n    post_attention_layernorm_weight, post_attention_layernorm_bias,\n    fc1_weight, fc1_bias, fc2_weight, fc2_bias,\n    gate_attn, gate_ffn,\n    norm_eps,\n):\n    batch_size, seq_len, hidden_size = hidden_state.shape\n    num_heads = 16\n    head_dim = hidden_size // num_heads\n    scaling = head_dim ** -0.5\n\n    # === Self-attention block ===\n    residual = hidden_state\n\n    # LayerNorm via FlashInfer\n    x_flat = hidden_state.reshape(-1, hidden_size).contiguous()\n    hidden_state = flashinfer.norm.layernorm(\n        x_flat, input_layernorm_weight, input_layernorm_bias, norm_eps\n    ).reshape(batch_size, seq_len, hidden_size)\n\n    # QKV projection\n    query = F.linear(hidden_state, q_proj_weight)\n    key = F.linear(hidden_state, k_proj_weight)\n    value = F.linear(hidden_state, v_proj_weight)\n\n    # FlashAttention format: [batch, seq_len, num_heads, head_dim]\n    query = query.view(batch_size, seq_len, num_heads, head_dim).contiguous()\n    key = key.view(batch_size, seq_len, num_heads, head_dim).contiguous()\n    value = value.view(batch_size, seq_len, num_heads, head_dim).contiguous()\n\n    # FlashAttention (non-causal vision attention)\n    attn_output = flash_attn_func(query, key, value, causal=False, softmax_scale=scaling)\n    attn_output = attn_output.reshape(batch_size, seq_len, hidden_size)\n\n    attn_output = F.linear(attn_output, o_proj_weight)\n\n    # Gated residual\n    hidden_state = residual + torch.tanh(gate_attn) * attn_output\n\n    # === MLP block ===\n    residual = hidden_state\n\n    # Post-attn LayerNorm\n    x_flat = hidden_state.reshape(-1, hidden_size).contiguous()\n    hidden_state = flashinfer.norm.layernorm(\n        x_flat, post_attention_layernorm_weight, post_attention_layernorm_bias, norm_eps\n    ).reshape(batch_size, seq_len, hidden_size)\n\n    # MLP with GELU\n    hidden_state = F.linear(hidden_state, fc1_weight, fc1_bias)\n    hidden_state = F.gelu(hidden_state)\n    hidden_state = F.linear(hidden_state, fc2_weight, fc2_bias)\n\n    output = residual + torch.tanh(gate_ffn) * hidden_state\n    return output\n"
+    }
+  ]
+}

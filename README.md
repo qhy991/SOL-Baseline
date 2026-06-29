@@ -26,14 +26,15 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 
 ## Results Summary
 
-### 25 Verified Baseline Solutions
+### 38 Verified Baseline Solutions
 
 | Library | Task Count | Notes |
 |---|---|---|
-| **FlashInfer** | 13 | RMSNorm (11) + fused RMS+MLP + encoder norm |
+| **FlashInfer** | 15 | RMSNorm (11) + fused RMS+MLP + 3 RMSNorm+projection tasks |
 | **Liger** | 3 | GEGLU (2) + GroupNorm |
 | **causal-conv1d** | 2 | Mamba/Hyena depthwise conv |
-| **FlashAttention + FlashInfer** | 7 | **Composition of multiple SOTA libs** for full attention/decoder blocks |
+| **FlashAttention + FlashInfer** | 12 | **Composition of SOTA libs** for full attention/decoder blocks |
+| **FlashAttention varlen (paged/ragged)** | 6 | GQA paged decode/prefill + ragged prefill with LSE |
 
 ### Performance (SOTA vs Torch Reference)
 
@@ -68,14 +69,35 @@ These tasks demonstrate that **complex fused kernels can be matched by composing
 | Task | Description | Status |
 |---|---|---|
 | L1_015 gqa_rope_qk_norm | GQA + RoPE + QK RMSNorm | ✓ 16/16 PASSED |
+| L1_043 mla_fused_qkv_rope_split | MLA QKV with RMSNorm | ✓ 16/16 PASSED |
+| L1_064 latent_kv_expansion_with_split | DeepSeek MLA KV expansion | ✓ 16/16 PASSED |
 | L1_073 encoder_norm_kv_projection | RMSNorm + KV projection | ✓ 16/16 PASSED |
 | L1_092 gqa_attention_with_qk_norm | Full GQA + QK norm + RoPE + Output | ✓ 16/16 PASSED |
 | L2_004 fused_residual_rms_mlp | Residual + RMSNorm + SwiGLU MLP | ✓ 16/16 PASSED |
 | L2_007 multimodal_rope_attention | GQA + 3D Multi-modal RoPE | ✓ 16/16 PASSED |
 | L2_018 cu_seqlens_vision_attention | Varlen vision attention | ⚠ 11/16 PASSED |
 | L2_020 decoder_layer_pre_post_norm | Complete decoder (complex-RoPE) | ✓ 16/16 PASSED |
+| L2_034 vision_language_cross_attention | 1D + 3D RoPE cross attention | ✓ 16/16 PASSED |
+| L2_039 kv_shared_attention | QK+V norm + RoPE + softcap | ✓ 16/16 PASSED |
+| L2_041 kv_shared_dual_rope | Dual-mode KV shared attention | ⚠ 11/16 PASSED |
 | L2_053 text_decoder_layer | Complete decoder layer (Norm+Attn+MLP) | ✓ 16/16 PASSED |
+| L2_054 vision_encoder_layer | LayerNorm + non-causal attn + gated MLP | ✓ 16/16 PASSED |
+| L2_059 decoder_layer_full_block | Complete Qwen3 decoder layer | ✓ 16/16 PASSED |
 | L2_062 decoder_complete_layer | Self-attn + Cross-attn + MLP | ✓ 16/16 PASSED |
+
+#### FlashAttention varlen for FlashInfer-Bench Paged/Ragged Attention
+
+Tasks requiring `flashinfer-trace` dataset (run `huggingface-cli download flashinfer-ai/flashinfer-trace`).
+Set `FLASHINFER_TRACE_DIR=/path/to/data/flashinfer-trace` when running.
+
+| Task | Description | Status |
+|---|---|---|
+| FIB_012 gqa_paged_decode_kv4 | Paged GQA decode | ✓ 48/48 PASSED |
+| FIB_013 gqa_paged_decode_kv8 | Paged GQA decode (kv8) | ✓ 48/48 PASSED |
+| FIB_014 gqa_paged_prefill_kv4 | Paged GQA causal prefill | ✓ 30/30 PASSED |
+| FIB_015 gqa_paged_prefill_kv8 | Paged GQA causal prefill (kv8) | ✓ 38/38 PASSED |
+| FIB_016 gqa_ragged_prefill_kv4 | Ragged GQA causal prefill | ✓ 15/15 PASSED |
+| FIB_017 gqa_ragged_prefill_kv8 | Ragged GQA causal prefill (kv8) | ✓ 21/21 PASSED |
 
 ## Directory Structure
 

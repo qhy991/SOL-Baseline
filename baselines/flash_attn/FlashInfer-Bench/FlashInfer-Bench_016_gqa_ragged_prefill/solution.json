@@ -1,0 +1,18 @@
+{
+  "name": "flash_attn_016_gqa_ragged_prefill_baseline",
+  "definition": "016_gqa_ragged_prefill_causal_h32_kv4_d128",
+  "author": "flash_attn",
+  "description": "FlashAttention varlen baseline for GQA ragged prefill",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import math\nimport torch\nfrom flash_attn import flash_attn_varlen_func\n\n\n@torch.no_grad()\ndef run(q, k, v, qo_indptr, kv_indptr, sm_scale):\n    # FlashAttention varlen expects int32 cu_seqlens\n    qo_indptr_i32 = qo_indptr.to(torch.int32)\n    kv_indptr_i32 = kv_indptr.to(torch.int32)\n\n    # Compute max_seqlens\n    q_lens = qo_indptr_i32[1:] - qo_indptr_i32[:-1]\n    kv_lens = kv_indptr_i32[1:] - kv_indptr_i32[:-1]\n    max_seqlen_q = int(q_lens.max().item()) if q_lens.numel() > 0 else 0\n    max_seqlen_k = int(kv_lens.max().item()) if kv_lens.numel() > 0 else 0\n\n    # FlashAttention varlen with causal mask + GQA native\n    # return_attn_probs=True returns (output, softmax_lse, dummy)\n    result = flash_attn_varlen_func(\n        q, k, v,\n        qo_indptr_i32, kv_indptr_i32,\n        max_seqlen_q, max_seqlen_k,\n        causal=True,\n        softmax_scale=sm_scale,\n        return_attn_probs=True,\n    )\n    output, softmax_lse, _ = result\n\n    # softmax_lse from FA: shape (num_heads, total_tokens), in natural log\n    # Reference expects: shape (total_tokens, num_heads), in log2\n    lse = softmax_lse.transpose(0, 1).contiguous() / math.log(2.0)\n\n    return output, lse\n"
+    }
+  ]
+}

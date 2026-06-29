@@ -1,0 +1,22 @@
+{
+  "name": "flash_attn_013_gqa_paged_decode_baseline",
+  "definition": "013_gqa_paged_decode_h32_kv8_d128_ps1",
+  "author": "flash_attn",
+  "description": "FlashAttention varlen baseline for GQA paged decode (ps=1)",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import math\nimport torch\nfrom flash_attn import flash_attn_varlen_func\n\n\n@torch.no_grad()\ndef run(q, k_cache, v_cache, kv_indptr, kv_indices, sm_scale):\n    batch_size, num_qo_heads, head_dim = q.shape\n    num_pages, page_size, num_kv_heads, _ = k_cache.shape\n\n    # For page_size=1, k_cache: [num_pages, 1, num_kv_heads, head_dim]\n    # Gather KV using indices to produce ragged KV: [total_kv, num_kv_heads, head_dim]\n    k_cache_flat = k_cache.squeeze(1)  # [num_pages, num_kv_heads, head_dim]\n    v_cache_flat = v_cache.squeeze(1)\n\n    kv_indices_long = kv_indices.to(torch.long)\n    k_gathered = k_cache_flat[kv_indices_long]  # [total_kv, num_kv_heads, head_dim]\n    v_gathered = v_cache_flat[kv_indices_long]\n\n    # Q is [batch_size, num_qo_heads, head_dim] - decode (1 token per batch)\n    # FlashAttention varlen expects q as [total_q, num_qo_heads, head_dim]\n    # For decode, total_q = batch_size, qo_indptr = [0, 1, 2, ..., batch_size]\n    qo_indptr = torch.arange(batch_size + 1, dtype=torch.int32, device=q.device)\n    kv_indptr_i32 = kv_indptr.to(torch.int32)\n\n    kv_lens = kv_indptr_i32[1:] - kv_indptr_i32[:-1]\n    max_seqlen_k = int(kv_lens.max().item()) if kv_lens.numel() > 0 else 0\n    max_seqlen_q = 1\n\n    if max_seqlen_k == 0:\n        # No KV at all\n        output = torch.zeros((batch_size, num_qo_heads, head_dim), dtype=torch.bfloat16, device=q.device)\n        lse = torch.full((batch_size, num_qo_heads), -float('inf'), dtype=torch.float32, device=q.device)\n        return output, lse\n\n    # Need to handle batches with kv_len=0: FA varlen requires all batches have q tokens\n    # but we can still call it - empty kv batches will produce zeros / -inf lse\n    # Actually FA will fail if a batch has zero kv. So we filter them out.\n    valid_mask = kv_lens > 0\n\n    output = torch.zeros((batch_size, num_qo_heads, head_dim), dtype=torch.bfloat16, device=q.device)\n    lse = torch.full((batch_size, num_qo_heads), -float('inf'), dtype=torch.float32, device=q.device)\n\n    if not valid_mask.all():\n        # Reconstruct valid-only inputs\n        valid_idx = torch.where(valid_mask)[0]\n        q_valid = q[valid_idx].contiguous()\n        # Build new kv_indptr only for valid batches\n        new_kv_indptr = torch.zeros(len(valid_idx) + 1, dtype=torch.int32, device=q.device)\n        new_kv_indptr[1:] = kv_lens[valid_idx].cumsum(0)\n        qo_indptr_valid = torch.arange(len(valid_idx) + 1, dtype=torch.int32, device=q.device)\n\n        result = flash_attn_varlen_func(\n            q_valid, k_gathered, v_gathered,\n            qo_indptr_valid, new_kv_indptr,\n            1, max_seqlen_k,\n            causal=False,\n            softmax_scale=sm_scale,\n            return_attn_probs=True,\n        )\n        out_valid, lse_valid, _ = result\n        output[valid_idx] = out_valid\n        lse[valid_idx] = lse_valid.transpose(0, 1).contiguous() / math.log(2.0)\n    else:\n        result = flash_attn_varlen_func(\n            q, k_gathered, v_gathered,\n            qo_indptr, kv_indptr_i32,\n            max_seqlen_q, max_seqlen_k,\n            causal=False,\n            softmax_scale=sm_scale,\n            return_attn_probs=True,\n        )\n        out_valid, lse_valid, _ = result\n        output = out_valid\n        lse = lse_valid.transpose(0, 1).contiguous() / math.log(2.0)\n\n    return output, lse\n"
+    }
+  ]
+}

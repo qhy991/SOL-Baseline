@@ -1,0 +1,18 @@
+{
+  "name": "flashinfer_064_latent_kv_expansion_baseline",
+  "definition": "064_latent_kv_expansion_with_split",
+  "author": "flashinfer",
+  "description": "FlashInfer RMSNorm baseline for L1_064 latent KV expansion",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.norm\n\n\n@torch.no_grad()\ndef run(compressed_kv, kv_a_layernorm_weight, kv_b_proj_weight, eps):\n    num_heads = 128\n    qk_nope_head_dim = 128\n    v_head_dim = 128\n\n    bsz, seq_len, kv_lora_rank = compressed_kv.shape\n\n    # RMSNorm via FlashInfer\n    x_flat = compressed_kv.reshape(-1, kv_lora_rank).contiguous()\n    normalized = flashinfer.norm.rmsnorm(x_flat, kv_a_layernorm_weight, eps).reshape(\n        bsz, seq_len, kv_lora_rank\n    )\n\n    # Linear projection\n    expanded = torch.matmul(normalized, kv_b_proj_weight.t())\n\n    # Reshape and split\n    kv = expanded.view(bsz, seq_len, num_heads, qk_nope_head_dim + v_head_dim)\n    kv = kv.transpose(1, 2)\n    k_nope = kv[:, :, :, :qk_nope_head_dim].contiguous()\n    value_states = kv[:, :, :, qk_nope_head_dim:].contiguous()\n\n    return k_nope, value_states\n"
+    }
+  ]
+}
