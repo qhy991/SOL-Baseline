@@ -1,0 +1,18 @@
+{
+  "name": "flash_attn_055_audio_encoder_baseline",
+  "definition": "055_audio_encoder_conv_positional_layer_stack",
+  "author": "flash_attn",
+  "description": "FlashAttention + FlashInfer LayerNorm for audio encoder layer",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nfrom flash_attn import flash_attn_func\nimport flashinfer.norm\n\n\n@torch.no_grad()\ndef run(\n    input_features,\n    conv1_weight, conv1_bias, conv2_weight, conv2_bias,\n    embed_positions_weight,\n    self_attn_layer_norm_weight, self_attn_layer_norm_bias,\n    q_proj_weight, q_proj_bias, k_proj_weight, v_proj_weight, v_proj_bias,\n    out_proj_weight, out_proj_bias,\n    final_layer_norm_weight, final_layer_norm_bias,\n    fc1_weight, fc1_bias, fc2_weight, fc2_bias,\n):\n    d_model = 5120\n    num_heads = 20\n    head_dim = 256\n    scaling = head_dim ** -0.5\n    ln_eps = 1e-5\n\n    # Stage 1: Conv feature extraction (cuDNN)\n    x = F.conv1d(input_features, conv1_weight, conv1_bias, padding=1)\n    x = F.gelu(x)\n    x = F.conv1d(x, conv2_weight, conv2_bias, stride=2, padding=1)\n    x = F.gelu(x)\n    x = x.permute(0, 2, 1)\n\n    bsz, seq_len, _ = x.shape\n    hidden_states = x + embed_positions_weight\n\n    # === Self-attention block ===\n    residual = hidden_states\n\n    # LayerNorm via FlashInfer\n    x_flat = hidden_states.reshape(-1, d_model).contiguous()\n    hidden_states = flashinfer.norm.layernorm(\n        x_flat, self_attn_layer_norm_weight, self_attn_layer_norm_bias, ln_eps\n    ).reshape(bsz, seq_len, d_model)\n\n    # QKV projection (Q is pre-scaled in reference, but we let FA do scaling)\n    query_states = F.linear(hidden_states, q_proj_weight, q_proj_bias)\n    key_states = F.linear(hidden_states, k_proj_weight, None)\n    value_states = F.linear(hidden_states, v_proj_weight, v_proj_bias)\n\n    # FlashAttention format: [batch, seq_len, num_heads, head_dim]\n    query_states = query_states.view(bsz, seq_len, num_heads, head_dim).contiguous()\n    key_states = key_states.view(bsz, seq_len, num_heads, head_dim).contiguous()\n    value_states = value_states.view(bsz, seq_len, num_heads, head_dim).contiguous()\n\n    # Non-causal attention (audio encoder)\n    attn_output = flash_attn_func(query_states, key_states, value_states, causal=False, softmax_scale=scaling)\n    attn_output = attn_output.reshape(bsz, seq_len, d_model)\n\n    attn_output = F.linear(attn_output, out_proj_weight, out_proj_bias)\n    hidden_states = residual + attn_output\n\n    # === FFN block ===\n    residual = hidden_states\n    x_flat = hidden_states.reshape(-1, d_model).contiguous()\n    hidden_states = flashinfer.norm.layernorm(\n        x_flat, final_layer_norm_weight, final_layer_norm_bias, ln_eps\n    ).reshape(bsz, seq_len, d_model)\n\n    hidden_states = F.linear(hidden_states, fc1_weight, fc1_bias)\n    hidden_states = F.gelu(hidden_states)\n    hidden_states = F.linear(hidden_states, fc2_weight, fc2_bias)\n\n    return residual + hidden_states\n"
+    }
+  ]
+}

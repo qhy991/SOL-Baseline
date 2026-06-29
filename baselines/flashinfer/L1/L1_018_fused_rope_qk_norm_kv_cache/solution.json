@@ -1,0 +1,18 @@
+{
+  "name": "flashinfer_018_fused_rope_qk_norm_kv_cache_baseline",
+  "definition": "018_fused_rope_with_qk_norm_and_kv_cache_update",
+  "author": "flashinfer",
+  "description": "FlashInfer RMSNorm + torch RoPE/cache for L1_018",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.norm\n\n\n@torch.no_grad()\ndef run(query, key, value, position_ids, key_cache, value_cache, cache_position,\n        q_norm_weight, k_norm_weight, inv_freq, rms_norm_eps):\n    batch_size, num_q_heads, seq_len, head_dim = query.shape\n    num_kv_heads = key.shape[1]\n\n    # QK RMSNorm via FlashInfer (need 2D input)\n    q_flat = query.reshape(-1, head_dim).contiguous()\n    query_norm = flashinfer.norm.rmsnorm(q_flat, q_norm_weight, rms_norm_eps).reshape(query.shape)\n    k_flat = key.reshape(-1, head_dim).contiguous()\n    key_norm = flashinfer.norm.rmsnorm(k_flat, k_norm_weight, rms_norm_eps).reshape(key.shape)\n\n    # RoPE computation (preserve reference)\n    inv_freq_expanded = inv_freq[None, None, :].expand(batch_size, seq_len, -1)\n    position_ids_expanded = position_ids[:, :, None].float()\n    freqs = position_ids_expanded * inv_freq_expanded\n    emb = torch.cat([freqs, freqs], dim=-1)\n    cos = emb.cos().to(query.dtype).unsqueeze(1)\n    sin = emb.sin().to(query.dtype).unsqueeze(1)\n\n    def apply_rope(x):\n        x1 = x[..., :head_dim // 2]\n        x2 = x[..., head_dim // 2:]\n        x_rotated = torch.cat([-x2, x1], dim=-1)\n        return (x * cos) + (x_rotated * sin)\n\n    query_rotated = apply_rope(query_norm)\n    key_rotated = apply_rope(key_norm)\n\n    # Update KV cache\n    key_cache[:, :, cache_position] = key_rotated\n    value_cache[:, :, cache_position] = value\n\n    return query_rotated, key_rotated, key_cache, value_cache\n"
+    }
+  ]
+}

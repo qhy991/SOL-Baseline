@@ -26,14 +26,14 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 
 ## Results Summary
 
-### 38 Verified Baseline Solutions
+### 40 Verified Baseline Solutions
 
 | Library | Task Count | Notes |
 |---|---|---|
-| **FlashInfer** | 15 | RMSNorm (11) + fused RMS+MLP + 3 RMSNorm+projection tasks |
+| **FlashInfer** | 16 | RMSNorm (11) + 5 RMSNorm-composed (RMS+MLP, embedding+norm, QKV+norm, KV cache+RoPE, etc.) |
 | **Liger** | 3 | GEGLU (2) + GroupNorm |
 | **causal-conv1d** | 2 | Mamba/Hyena depthwise conv |
-| **FlashAttention + FlashInfer** | 12 | **Composition of SOTA libs** for full attention/decoder blocks |
+| **FlashAttention + FlashInfer** | 13 | **Composition of SOTA libs** for full attention/decoder/encoder blocks |
 | **FlashAttention varlen (paged/ragged)** | 6 | GQA paged decode/prefill + ragged prefill with LSE |
 
 ### Performance (SOTA vs Torch Reference)
@@ -57,6 +57,7 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 | L1_033 post_norm_residual | FlashInfer | 0.073 | 0.563 | **7.7x** |
 | L1_069 rms_norm | FlashInfer | 0.044 | 0.303 | **6.8x** |
 | L1_073 encoder_norm_kv_projection | FlashInfer | 0.065 | 0.117 | **1.8x** |
+| L1_018 fused_rope_qk_norm_kv_cache | FlashInfer | 0.204 | 0.328 | **1.6x** |
 | L1_043 mla_fused_qkv_rope_split | FlashInfer | 0.487 | 0.550 | 1.1x |
 | L1_064 latent_kv_expansion | FlashInfer | 0.391 | 0.434 | 1.1x |
 | L1_048 fused_gate_up_projection (GEGLU) | Liger | 1.004 | 2.263 | **2.3x** |
@@ -71,6 +72,7 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 | Task | Library | SOTA (ms) | Ref (ms) | Speedup |
 |---|---|---|---|---|
 | L2_054 vision_encoder_layer | FlashAttn+FlashInfer | 0.844 | 6.148 | **7.3x** |
+| L2_055 audio_encoder_conv_pos_layer | FlashAttn+FlashInfer | 28.45 | 73.92 | **2.6x** |
 | L2_018 cu_seqlens_vision_attention | FlashAttn varlen | 0.352 | 2.273 | **6.4x** |
 | L2_041 kv_shared_dual_rope | FlashAttn+FlashInfer | 0.746 | 2.348 | **3.1x** |
 | L2_007 multimodal_rope_attention | FlashAttn | 1.033 | 2.495 | **2.4x** |
