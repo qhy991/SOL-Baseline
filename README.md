@@ -87,10 +87,10 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 | L1_036 flux_output_norm_projection | torch native | 1.4x |
 | L2_034 vision_language_cross_attn | FlashAttn | 1.3x |
 | L2_039 kv_shared_attention | FlashAttn + FlashInfer | 1.3x |
+| L1_021 vision_cu_seqlens_attention | **torch SDPA adaptive** (block-diag/per-seq) | **1.4x** |
 | L1_043 mla_fused_qkv_rope_split | FlashInfer | 1.1x |
 | L1_064 latent_kv_expansion | FlashInfer | 1.1x |
 | L1_082 qk_norm_scaled_dot_product_attention | torch native | 1.1x |
-| L1_021 vision_cu_seqlens_attention | torch SDPA (block-diag mask) | 1.1x |
 | L2_004 fused_residual_rms_mlp | FlashInfer | 1.1x |
 | L2_062 decoder_complete_layer | FlashAttn + FlashInfer | 1.0x |
 
@@ -140,6 +140,7 @@ These tasks require the `flashinfer-trace` dataset. We verified correctness; per
 │   ├── COVERAGE_ANALYSIS.md     # Per-task coverage analysis
 │   ├── ADDITIONAL_LIBRARIES.md  # Research on more SOTA libraries
 │   ├── COMPOSITION_METHODOLOGY.md # Methodology for composing SOTA libs
+│   ├── ADAPTIVE_BASELINES.md    # ⭐ Workload-aware library selection (key technique)
 │   └── NEGATIVE_RESULTS.md      # Cases where SOTA libs don't beat reference
 ├── scripts/
 │   ├── benchmark.py             # Benchmark SOTA vs torch reference
