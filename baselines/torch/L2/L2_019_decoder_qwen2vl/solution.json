@@ -1,0 +1,18 @@
+{
+  "name": "torch_019_decoder_qwen2vl_baseline",
+  "definition": "019_decoder_layer_fused_attention_mlp",
+  "author": "torch",
+  "description": "torch F.rms_norm + F.sdpa for L2_019 Qwen2VL decoder (float32)",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\n\n@torch.no_grad()\ndef run(\n    hidden_states,\n    input_layernorm_weight,\n    q_proj_weight, q_proj_bias,\n    k_proj_weight, k_proj_bias,\n    v_proj_weight, v_proj_bias,\n    o_proj_weight,\n    rope_cos, rope_sin,\n    post_attention_layernorm_weight,\n    gate_proj_weight, up_proj_weight, down_proj_weight,\n    rms_norm_eps,\n):\n    hidden_size = 3584\n    num_heads = 28\n    num_kv_heads = 4\n    head_dim = 128\n    mrope_section = [16, 24, 24]\n    scaling = head_dim ** -0.5\n\n    batch_size, seq_len, _ = hidden_states.shape\n\n    residual = hidden_states\n\n    # Pre-attention RMSNorm\n    hidden_states = F.rms_norm(hidden_states, (hidden_size,), input_layernorm_weight, eps=rms_norm_eps)\n\n    # QKV\n    query_states = F.linear(hidden_states, q_proj_weight, q_proj_bias)\n    key_states = F.linear(hidden_states, k_proj_weight, k_proj_bias)\n    value_states = F.linear(hidden_states, v_proj_weight, v_proj_bias)\n\n    query_states = query_states.view(batch_size, seq_len, num_heads, head_dim).transpose(1, 2)\n    key_states = key_states.view(batch_size, seq_len, num_kv_heads, head_dim).transpose(1, 2)\n    value_states = value_states.view(batch_size, seq_len, num_kv_heads, head_dim).transpose(1, 2)\n\n    # Multimodal 3D RoPE (keep reference)\n    mrope_section_doubled = [s * 2 for s in mrope_section]\n    cos_parts = []\n    sin_parts = []\n    for i, section_size in enumerate(mrope_section_doubled):\n        cos_i = rope_cos[i % 3]\n        sin_i = rope_sin[i % 3]\n        start_idx = sum(mrope_section_doubled[:i])\n        end_idx = start_idx + section_size\n        cos_parts.append(cos_i[..., start_idx:end_idx])\n        sin_parts.append(sin_i[..., start_idx:end_idx])\n    cos_combined = torch.cat(cos_parts, dim=-1)[:, :seq_len, :].unsqueeze(1)\n    sin_combined = torch.cat(sin_parts, dim=-1)[:, :seq_len, :].unsqueeze(1)\n\n    def rotate_half(x):\n        x1 = x[..., : x.shape[-1] // 2]\n        x2 = x[..., x.shape[-1] // 2 :]\n        return torch.cat((-x2, x1), dim=-1)\n\n    query_states = (query_states * cos_combined) + (rotate_half(query_states) * sin_combined)\n    key_states = (key_states * cos_combined) + (rotate_half(key_states) * sin_combined)\n\n    # SDPA with GQA + causal (cuDNN backend for float32)\n    attn_output = F.scaled_dot_product_attention(\n        query_states, key_states, value_states,\n        is_causal=True,\n        scale=scaling,\n        enable_gqa=True,\n    )\n\n    attn_output = attn_output.transpose(1, 2).contiguous()\n    attn_output = attn_output.reshape(batch_size, seq_len, hidden_size)\n    attn_output = F.linear(attn_output, o_proj_weight)\n\n    hidden_states = residual + attn_output\n\n    # MLP block\n    residual = hidden_states\n    hidden_states = F.rms_norm(hidden_states, (hidden_size,), post_attention_layernorm_weight, eps=rms_norm_eps)\n\n    gate = F.silu(F.linear(hidden_states, gate_proj_weight))\n    up = F.linear(hidden_states, up_proj_weight)\n    intermediate = gate * up\n    hidden_states = F.linear(intermediate, down_proj_weight)\n\n    return residual + hidden_states\n"
+    }
+  ]
+}

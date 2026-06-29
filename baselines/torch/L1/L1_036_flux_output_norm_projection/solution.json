@@ -1,0 +1,18 @@
+{
+  "name": "torch_036_flux_output_norm_projection_baseline",
+  "definition": "036_flux_output_norm_projection_chain",
+  "author": "torch",
+  "description": "torch F.layer_norm + SiLU + modulation + projection for L1_036",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\n\n@torch.no_grad()\ndef run(hidden_states, temb, linear_weight, linear_bias, proj_out_weight, proj_out_bias, eps):\n    inner_dim = temb.shape[-1]\n\n    # LayerNorm without weight/bias\n    hidden_states_norm = F.layer_norm(hidden_states, (inner_dim,), None, None, eps=eps)\n\n    # SiLU + linear modulation\n    temb_silu = F.silu(temb)\n    modulation = F.linear(temb_silu, linear_weight, linear_bias)\n    shift = modulation[:, :inner_dim].unsqueeze(1)\n    scale = modulation[:, inner_dim:].unsqueeze(1)\n\n    # Adaptive modulation\n    hidden_states_mod = hidden_states_norm * (1.0 + scale) + shift\n\n    # Output projection\n    output = F.linear(hidden_states_mod, proj_out_weight, proj_out_bias)\n    return output\n"
+    }
+  ]
+}

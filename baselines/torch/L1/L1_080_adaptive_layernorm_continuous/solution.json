@@ -1,0 +1,18 @@
+{
+  "name": "torch_080_adaptive_layernorm_continuous_baseline",
+  "definition": "080_adaptive_layernorm_continuous_with_modulation",
+  "author": "torch",
+  "description": "torch F.layer_norm + manual modulation for L1_080",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\n\n@torch.no_grad()\ndef run(hidden_states, temb, linear_weight, linear_bias, eps):\n    inner_dim = hidden_states.shape[-1]\n\n    # LayerNorm without weight/bias (just normalization step)\n    normalized = F.layer_norm(hidden_states, (inner_dim,), None, None, eps=eps)\n\n    # Generate scale/shift from temb\n    modulation = F.linear(temb, linear_weight, linear_bias)\n    scale = modulation[:, :inner_dim].unsqueeze(1)\n    shift = modulation[:, inner_dim:].unsqueeze(1)\n\n    # Adaptive modulation\n    return normalized * (1.0 + scale) + shift\n"
+    }
+  ]
+}

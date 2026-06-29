@@ -1,0 +1,18 @@
+{
+  "name": "torch_054_audio_attention_qkv_normalization_baseline",
+  "definition": "054_audio_attention_qkv_projection_with_normalization",
+  "author": "torch",
+  "description": "torch F.rms_norm + linear for L1_054 audio QKV with RMSNorm",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\n\n@torch.no_grad()\ndef run(hidden_states, q_proj_weight, k_proj_weight, v_proj_weight, q_norm_weight, k_norm_weight, eps):\n    batch_size, seq_len, hidden_size = hidden_states.shape\n    num_heads = 8\n    head_dim = 128\n\n    # QKV projections\n    query = torch.matmul(hidden_states, q_proj_weight.t())\n    key = torch.matmul(hidden_states, k_proj_weight.t())\n    value = torch.matmul(hidden_states, v_proj_weight.t())\n\n    # Reshape to multi-head\n    query = query.view(batch_size, seq_len, num_heads, head_dim)\n    key = key.view(batch_size, seq_len, num_heads, head_dim)\n    value = value.view(batch_size, seq_len, num_heads, head_dim)\n\n    # Per-head RMSNorm via torch native\n    query_states = F.rms_norm(query, (head_dim,), q_norm_weight, eps=eps)\n    key_states = F.rms_norm(key, (head_dim,), k_norm_weight, eps=eps)\n\n    return query_states, key_states, value\n"
+    }
+  ]
+}

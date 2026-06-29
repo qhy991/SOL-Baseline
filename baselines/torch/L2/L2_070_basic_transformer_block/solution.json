@@ -1,0 +1,18 @@
+{
+  "name": "torch_070_basic_transformer_block_baseline",
+  "definition": "070_basic_transformer_block",
+  "author": "torch",
+  "description": "torch F.layer_norm + F.sdpa for L2_070 BasicTransformerBlock (SD)",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\n\n@torch.no_grad()\ndef run(\n    hidden_states, encoder_hidden_states,\n    norm1_weight, norm1_bias,\n    attn1_to_q_weight, attn1_to_k_weight, attn1_to_v_weight,\n    attn1_to_out_weight, attn1_to_out_bias,\n    norm2_weight, norm2_bias,\n    attn2_to_q_weight, attn2_to_k_weight, attn2_to_v_weight,\n    attn2_to_out_weight, attn2_to_out_bias,\n    norm3_weight, norm3_bias,\n    ff_linear1_weight, ff_linear1_bias,\n    ff_linear2_weight, ff_linear2_bias,\n    norm_eps,\n):\n    num_attention_heads = 160\n    attention_head_dim = 24\n    inner_dim = num_attention_heads * attention_head_dim  # 3840\n    dim = hidden_states.shape[-1]  # 1280\n    scale = attention_head_dim ** -0.5\n\n    batch_size = hidden_states.shape[0]\n    spatial_seq_len = hidden_states.shape[1]\n    encoder_seq_len = encoder_hidden_states.shape[1]\n\n    # === Self-Attention ===\n    norm_hidden_states = F.layer_norm(hidden_states, (dim,), norm1_weight, norm1_bias, eps=norm_eps)\n\n    query = F.linear(norm_hidden_states, attn1_to_q_weight)\n    key = F.linear(norm_hidden_states, attn1_to_k_weight)\n    value = F.linear(norm_hidden_states, attn1_to_v_weight)\n\n    query = query.view(batch_size, spatial_seq_len, num_attention_heads, attention_head_dim).transpose(1, 2)\n    key = key.view(batch_size, spatial_seq_len, num_attention_heads, attention_head_dim).transpose(1, 2)\n    value = value.view(batch_size, spatial_seq_len, num_attention_heads, attention_head_dim).transpose(1, 2)\n\n    attn_output = F.scaled_dot_product_attention(query, key, value, scale=scale)\n    attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, spatial_seq_len, inner_dim)\n    attn_output = F.linear(attn_output, attn1_to_out_weight, attn1_to_out_bias)\n\n    hidden_states = hidden_states + attn_output\n\n    # === Cross-Attention ===\n    norm_hidden_states = F.layer_norm(hidden_states, (dim,), norm2_weight, norm2_bias, eps=norm_eps)\n\n    query = F.linear(norm_hidden_states, attn2_to_q_weight)\n    key = F.linear(encoder_hidden_states, attn2_to_k_weight)\n    value = F.linear(encoder_hidden_states, attn2_to_v_weight)\n\n    query = query.view(batch_size, spatial_seq_len, num_attention_heads, attention_head_dim).transpose(1, 2)\n    key = key.view(batch_size, encoder_seq_len, num_attention_heads, attention_head_dim).transpose(1, 2)\n    value = value.view(batch_size, encoder_seq_len, num_attention_heads, attention_head_dim).transpose(1, 2)\n\n    attn_output = F.scaled_dot_product_attention(query, key, value, scale=scale)\n    attn_output = attn_output.transpose(1, 2).contiguous().view(batch_size, spatial_seq_len, inner_dim)\n    attn_output = F.linear(attn_output, attn2_to_out_weight, attn2_to_out_bias)\n\n    hidden_states = hidden_states + attn_output\n\n    # === FFN with GEGLU ===\n    norm_hidden_states = F.layer_norm(hidden_states, (dim,), norm3_weight, norm3_bias, eps=norm_eps)\n\n    ff_output = F.linear(norm_hidden_states, ff_linear1_weight, ff_linear1_bias)\n    x, gate = ff_output.chunk(2, dim=-1)\n    ff_output = x * F.gelu(gate, approximate='tanh')\n    ff_output = F.linear(ff_output, ff_linear2_weight, ff_linear2_bias)\n\n    return hidden_states + ff_output\n"
+    }
+  ]
+}

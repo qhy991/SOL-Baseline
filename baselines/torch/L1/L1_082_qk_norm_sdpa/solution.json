@@ -1,0 +1,18 @@
+{
+  "name": "torch_082_qk_norm_sdpa_baseline",
+  "definition": "082_qk_norm_scaled_dot_product_attention",
+  "author": "torch",
+  "description": "torch F.layer_norm + F.scaled_dot_product_attention for L1_082",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\n\n@torch.no_grad()\ndef run(\n    hidden_states, qkv_weight, qkv_bias,\n    q_norm_weight, q_norm_bias, k_norm_weight, k_norm_bias,\n    out_proj_weight, out_proj_bias, eps,\n):\n    batch_size, seq_len, dim = hidden_states.shape\n    num_heads = 24\n    head_dim = 64\n    scale = head_dim ** -0.5\n\n    # QKV projection\n    qkv = torch.matmul(hidden_states, qkv_weight.t()) + qkv_bias\n    qkv = qkv.reshape(batch_size, seq_len, 3, num_heads, head_dim)\n    qkv = qkv.permute(2, 0, 3, 1, 4)\n    q, k, v = qkv[0], qkv[1], qkv[2]\n\n    # Q LayerNorm + bias via torch native\n    q = F.layer_norm(q, (head_dim,), q_norm_weight, q_norm_bias, eps=eps)\n    k = F.layer_norm(k, (head_dim,), k_norm_weight, k_norm_bias, eps=eps)\n\n    # Use PyTorch SDPA (cuDNN backend for float32)\n    attn_output = F.scaled_dot_product_attention(q, k, v, scale=scale)\n\n    attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, num_heads * head_dim)\n    output = torch.matmul(attn_output, out_proj_weight.t()) + out_proj_bias\n    return output\n"
+    }
+  ]
+}

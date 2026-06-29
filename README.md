@@ -26,15 +26,16 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 
 ## Results Summary
 
-### 40 Verified Baseline Solutions
+### 50 Verified Baseline Solutions
 
 | Library | Task Count | Notes |
 |---|---|---|
-| **FlashInfer** | 16 | RMSNorm (11) + 5 RMSNorm-composed (RMS+MLP, embedding+norm, QKV+norm, KV cache+RoPE, etc.) |
+| **FlashInfer** | 16 | RMSNorm (11) + 5 RMSNorm-composed |
 | **Liger** | 3 | GEGLU (2) + GroupNorm |
 | **causal-conv1d** | 2 | Mamba/Hyena depthwise conv |
-| **FlashAttention + FlashInfer** | 13 | **Composition of SOTA libs** for full attention/decoder/encoder blocks |
+| **FlashAttention + FlashInfer** | 13 | Composition for full attention/decoder/encoder blocks |
 | **FlashAttention varlen (paged/ragged)** | 6 | GQA paged decode/prefill + ragged prefill with LSE |
+| **torch native (F.rms_norm + F.sdpa)** | 10 | **PyTorch 2.x built-in SOTA**: handles float32, per-head norm, arbitrary mask |
 
 ### Performance (SOTA vs Torch Reference)
 
@@ -106,6 +107,28 @@ Set `FLASHINFER_TRACE_DIR=/path/to/data/flashinfer-trace` when running.
 | FIB_016 gqa_ragged_prefill_kv4 | Ragged GQA causal prefill | ✓ 15/15 PASSED |
 | FIB_017 gqa_ragged_prefill_kv8 | Ragged GQA causal prefill (kv8) | ✓ 21/21 PASSED |
 
+#### PyTorch 2.x Native Baselines (F.rms_norm + F.sdpa)
+
+PyTorch 2.x already provides SOTA implementations for many primitives:
+- `F.rms_norm`: faster than FlashInfer in our benchmark (cuDNN backend)
+- `F.layer_norm`: handles arbitrary normalized_shape
+- `F.scaled_dot_product_attention`: supports float32 via cuDNN backend, accepts arbitrary attn_mask, native GQA via `enable_gqa=True`
+
+This unlocks **float32 tasks** that bf16-only libraries (FlashInfer/FlashAttention) cannot handle:
+
+| Task | Description | Status |
+|---|---|---|
+| L1_036 flux_output_norm_projection | LayerNorm + modulation + projection | ✓ 16/16 PASSED |
+| L1_038 flux_multi_head_rmsnorm_qk | Per-head RMSNorm | ✓ 16/16 PASSED |
+| L1_054 audio_attention_qkv_norm | QKV + per-head RMSNorm (float32) | ✓ 16/16 PASSED |
+| L1_080 adaptive_layernorm_continuous | LayerNorm + modulation | ✓ 16/16 PASSED |
+| L1_082 qk_norm_sdpa | QK LayerNorm + SDPA (float32) | ✓ 16/16 PASSED |
+| L2_002 decoder_layer_full_block | LLaMA decoder layer (float32) | ✓ 18/18 PASSED |
+| L2_019 decoder_qwen2vl | Qwen2VL decoder w/ 3D RoPE (float32) | ✓ 16/16 PASSED |
+| L2_027 gqa_yarn_rope_qk_norm | GQA + YARN RoPE + arbitrary mask (mixed) | ✓ 16/16 PASSED |
+| L2_063 encoder_dual_norm | Encoder layer (float32, non-causal) | ✓ 16/16 PASSED |
+| L2_070 basic_transformer_block | Stable Diffusion BasicTransformerBlock (float32) | ✓ 16/16 PASSED |
+
 ## Directory Structure
 
 ```
@@ -113,21 +136,20 @@ Set `FLASHINFER_TRACE_DIR=/path/to/data/flashinfer-trace` when running.
 ├── baselines/
 │   ├── flashinfer/
 │   │   ├── FlashInfer-Bench/   # 9 RMSNorm baselines (direct API match)
-│   │   ├── L1/                 # 3 L1 RMSNorm baselines
+│   │   ├── L1/                 # 5 L1 RMSNorm-based baselines
 │   │   └── L2/                 # 1 L2 fused RMS+MLP baseline
 │   ├── liger/
 │   │   └── L1/                 # 3 L1 activation/norm baselines
 │   ├── causal_conv1d/
 │   │   └── L1/                 # 2 L1 causal conv baselines
-│   └── flash_attn/             # SOTA composition baselines
-│       ├── L1/                 # 2 L1 attention block baselines
-│       └── L2/                 # 5 L2 decoder/attention block baselines
+│   ├── flash_attn/             # SOTA composition baselines
+│   │   ├── L1/                 # 2 L1 attention block baselines
+│   │   ├── L2/                 # 7 L2 decoder/attention block baselines
+│   │   └── FlashInfer-Bench/   # 6 paged/ragged GQA baselines
+│   └── torch/                  # PyTorch 2.x native (F.rms_norm + F.sdpa)
+│       ├── L1/                 # 5 L1 norm/attention baselines (float32 support)
+│       └── L2/                 # 5 L2 decoder/encoder block baselines (float32)
 ├── docs/
-│   ├── INSTALL.md              # Library installation guide
-│   ├── BASELINE_DESIGN.md      # Baseline design notes
-│   ├── COVERAGE_ANALYSIS.md    # Per-task coverage analysis
-│   ├── ADDITIONAL_LIBRARIES.md # Research on more SOTA libraries
-│   └── COMPOSITION_METHODOLOGY.md  # ⭐ Methodology for composing SOTA libs
 │   ├── INSTALL.md              # Library installation guide
 │   ├── BASELINE_DESIGN.md      # Baseline design notes
 │   ├── COVERAGE_ANALYSIS.md    # Per-task coverage analysis
