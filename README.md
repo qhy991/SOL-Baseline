@@ -54,36 +54,41 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 #### L1 Tasks
 | Task | Library | SOTA (ms) | Ref (ms) | Speedup |
 |---|---|---|---|---|
-| L1_033 post_norm_residual | FlashInfer | 0.041 | 0.298 | **7.2x** |
-| L1_069 rms_norm | FlashInfer | 0.040 | 0.267 | **6.7x** |
-| L1_048 fused_gate_up_projection | Liger | 0.764 | 1.707 | **2.2x** |
-| L1_005 conv_gated_projection | causal-conv1d | 0.158 | 0.256 | **1.6x** |
-| L1_029 mamba_conv1d | causal-conv1d | 1.560 | 2.335 | **1.5x** |
-| L1_085 geglu_activation | Liger | 0.116 | 0.084 | 0.7x |
-| L1_078 group_norm_fusion | Liger | 0.342 | 0.095 | 0.3x |
+| L1_033 post_norm_residual | FlashInfer | 0.073 | 0.563 | **7.7x** |
+| L1_069 rms_norm | FlashInfer | 0.044 | 0.303 | **6.8x** |
+| L1_073 encoder_norm_kv_projection | FlashInfer | 0.065 | 0.117 | **1.8x** |
+| L1_043 mla_fused_qkv_rope_split | FlashInfer | 0.487 | 0.550 | 1.1x |
+| L1_064 latent_kv_expansion | FlashInfer | 0.391 | 0.434 | 1.1x |
+| L1_048 fused_gate_up_projection (GEGLU) | Liger | 1.004 | 2.263 | **2.3x** |
+| L1_005 conv_gated_projection | causal-conv1d | 0.160 | 0.288 | **1.8x** |
+| L1_029 mamba_conv1d | causal-conv1d | 1.172 | 1.831 | **1.6x** |
+| L1_015 gqa_rope_qk_norm | FlashAttn+FlashInfer | 0.820 | 2.890 | **3.5x** |
+| L1_092 gqa_attention_with_qk_norm | FlashAttn+FlashInfer | 0.752 | 1.697 | **2.3x** |
+| L1_085 geglu_activation | Liger | 0.114 | 0.091 | 0.8x |
+| L1_078 group_norm_fusion | Liger | 0.169 | 0.087 | 0.5x |
 
-#### SOTA Library Composition (FlashAttention + FlashInfer + Liger)
+#### L2 Tasks (Composition Baselines)
+| Task | Library | SOTA (ms) | Ref (ms) | Speedup |
+|---|---|---|---|---|
+| L2_054 vision_encoder_layer | FlashAttn+FlashInfer | 0.844 | 6.148 | **7.3x** |
+| L2_018 cu_seqlens_vision_attention | FlashAttn varlen | 0.352 | 2.273 | **6.4x** |
+| L2_041 kv_shared_dual_rope | FlashAttn+FlashInfer | 0.746 | 2.348 | **3.1x** |
+| L2_007 multimodal_rope_attention | FlashAttn | 1.033 | 2.495 | **2.4x** |
+| L2_059 decoder_layer_full_block | FlashAttn+FlashInfer | 2.013 | 3.373 | **1.7x** |
+| L2_020 decoder_layer_pre_post_norm | FlashAttn+FlashInfer | 0.866 | 1.186 | 1.4x |
+| L2_034 vision_language_cross_attention | FlashAttn | 1.517 | 2.178 | 1.4x |
+| L2_062 decoder_complete_layer | FlashAttn+FlashInfer | 1.097 | 1.494 | 1.4x |
+| L2_053 text_decoder_layer | FlashAttn+FlashInfer | 1.427 | 1.716 | 1.2x |
+| L2_039 kv_shared_attention | FlashAttn+FlashInfer | 0.778 | 0.895 | 1.1x |
+| L2_004 fused_residual_rms_mlp | FlashInfer | 16.772 | 17.485 | 1.0x |
 
-These tasks demonstrate that **complex fused kernels can be matched by composing multiple SOTA libraries**. See [docs/COMPOSITION_METHODOLOGY.md](docs/COMPOSITION_METHODOLOGY.md) for the detailed methodology.
+#### SOTA Library Composition
 
-| Task | Description | Status |
-|---|---|---|
-| L1_015 gqa_rope_qk_norm | GQA + RoPE + QK RMSNorm | ✓ 16/16 PASSED |
-| L1_043 mla_fused_qkv_rope_split | MLA QKV with RMSNorm | ✓ 16/16 PASSED |
-| L1_064 latent_kv_expansion_with_split | DeepSeek MLA KV expansion | ✓ 16/16 PASSED |
-| L1_073 encoder_norm_kv_projection | RMSNorm + KV projection | ✓ 16/16 PASSED |
-| L1_092 gqa_attention_with_qk_norm | Full GQA + QK norm + RoPE + Output | ✓ 16/16 PASSED |
-| L2_004 fused_residual_rms_mlp | Residual + RMSNorm + SwiGLU MLP | ✓ 16/16 PASSED |
-| L2_007 multimodal_rope_attention | GQA + 3D Multi-modal RoPE | ✓ 16/16 PASSED |
-| L2_018 cu_seqlens_vision_attention | Varlen vision attention | ⚠ 11/16 PASSED |
-| L2_020 decoder_layer_pre_post_norm | Complete decoder (complex-RoPE) | ✓ 16/16 PASSED |
-| L2_034 vision_language_cross_attention | 1D + 3D RoPE cross attention | ✓ 16/16 PASSED |
-| L2_039 kv_shared_attention | QK+V norm + RoPE + softcap | ✓ 16/16 PASSED |
-| L2_041 kv_shared_dual_rope | Dual-mode KV shared attention | ⚠ 11/16 PASSED |
-| L2_053 text_decoder_layer | Complete decoder layer (Norm+Attn+MLP) | ✓ 16/16 PASSED |
-| L2_054 vision_encoder_layer | LayerNorm + non-causal attn + gated MLP | ✓ 16/16 PASSED |
-| L2_059 decoder_layer_full_block | Complete Qwen3 decoder layer | ✓ 16/16 PASSED |
-| L2_062 decoder_complete_layer | Self-attn + Cross-attn + MLP | ✓ 16/16 PASSED |
+The L1/L2 tasks above demonstrate that **complex fused kernels can be matched by composing multiple SOTA libraries**. See [docs/COMPOSITION_METHODOLOGY.md](docs/COMPOSITION_METHODOLOGY.md) for the detailed methodology.
+
+All tasks pass 16/16 workloads except:
+- L2_018 cu_seqlens_vision_attention: 11/16 (FlashAttention bfloat16 precision on small sequences)
+- L2_041 kv_shared_dual_rope: 11/16 (similar precision issue)
 
 #### FlashAttention varlen for FlashInfer-Bench Paged/Ragged Attention
 
