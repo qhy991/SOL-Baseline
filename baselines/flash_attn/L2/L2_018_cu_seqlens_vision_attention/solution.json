@@ -1,0 +1,18 @@
+{
+  "name": "flash_attn_018_cu_seqlens_vision_attention_baseline",
+  "definition": "018_cu_seqlens_variable_length_vision_attention",
+  "author": "flash_attn",
+  "description": "FlashAttention varlen baseline for L2_018 cu_seqlens vision attention",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nfrom flash_attn import flash_attn_varlen_func\n\n\ndef _apply_rotary_pos_emb(q, k, cos, sin):\n    def rotate_half(x):\n        x1 = x[..., : x.shape[-1] // 2]\n        x2 = x[..., x.shape[-1] // 2 :]\n        return torch.cat((-x2, x1), dim=-1)\n    q_embed = (q * cos) + (rotate_half(q) * sin)\n    k_embed = (k * cos) + (rotate_half(k) * sin)\n    return q_embed, k_embed\n\n\n@torch.no_grad()\ndef run(hidden_states, cu_seqlens, cos, sin, qkv_weight, qkv_bias, proj_weight, proj_bias):\n    embed_dim = 1152\n    num_heads = 16\n    head_dim = 72\n    scaling = head_dim ** -0.5\n\n    seq_length = hidden_states.shape[0]\n\n    # QKV projection\n    qkv = F.linear(hidden_states, qkv_weight, qkv_bias)\n    qkv = qkv.reshape(seq_length, 3, num_heads, head_dim)\n    query_states, key_states, value_states = qkv.permute(1, 0, 2, 3).unbind(0)\n\n    # Apply RoPE\n    query_states, key_states = _apply_rotary_pos_emb(query_states, key_states, cos, sin)\n\n    # Build cu_seqlens with prepended 0, convert to int32 for FA\n    cu_seqlens_with_zero = torch.cat([\n        torch.zeros(1, dtype=torch.int32, device=cu_seqlens.device),\n        cu_seqlens.to(torch.int32)\n    ])\n\n    # Compute max_seqlen\n    lengths = cu_seqlens_with_zero[1:] - cu_seqlens_with_zero[:-1]\n    max_seqlen = int(lengths.max().item()) if lengths.numel() > 0 else 0\n\n    if max_seqlen == 0:\n        return torch.zeros(seq_length, embed_dim, device=hidden_states.device, dtype=hidden_states.dtype)\n\n    # FlashAttention varlen\n    attn_output = flash_attn_varlen_func(\n        query_states, key_states, value_states,\n        cu_seqlens_with_zero, cu_seqlens_with_zero,\n        max_seqlen, max_seqlen,\n        causal=False,\n        softmax_scale=scaling,\n    )\n\n    # Reshape and project\n    attn_output = attn_output.reshape(seq_length, embed_dim)\n    attn_output = F.linear(attn_output, proj_weight, proj_bias)\n    return attn_output\n"
+    }
+  ]
+}

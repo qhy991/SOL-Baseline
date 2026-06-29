@@ -1,0 +1,18 @@
+{
+  "name": "flashinfer_073_encoder_norm_kv_projection_baseline",
+  "definition": "073_fused_encoder_final_norm_to_decoder_cross_attention_kv_projection",
+  "author": "flashinfer",
+  "description": "FlashInfer rmsnorm + torch linear baseline for L1_073",
+  "spec": {
+    "languages": ["pytorch"],
+    "target_hardware": ["LOCAL"],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nimport flashinfer.norm\n\n\n@torch.no_grad()\ndef run(encoder_hidden_states, norm_weight, k_proj_weight, v_proj_weight, eps):\n    batch_size, seq_len, hidden_size = encoder_hidden_states.shape\n    num_kv_heads = 2\n    head_dim = 64\n\n    # RMSNorm via FlashInfer (needs 2D input)\n    x_flat = encoder_hidden_states.reshape(-1, hidden_size).contiguous()\n    normalized = flashinfer.norm.rmsnorm(x_flat, norm_weight, eps)\n    normalized = normalized.reshape(batch_size, seq_len, hidden_size)\n\n    # K/V projections\n    keys_flat = F.linear(normalized, k_proj_weight)\n    values_flat = F.linear(normalized, v_proj_weight)\n\n    keys = keys_flat.view(batch_size, seq_len, num_kv_heads, head_dim).transpose(1, 2).contiguous()\n    values = values_flat.view(batch_size, seq_len, num_kv_heads, head_dim).transpose(1, 2).contiguous()\n\n    return keys, values\n"
+    }
+  ]
+}

@@ -26,13 +26,14 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 
 ## Results Summary
 
-### 16 Verified Baseline Solutions
+### 21 Verified Baseline Solutions
 
 | Library | Task Count | Speedup Range |
 |---|---|---|
-| **FlashInfer** | 11 | 6.7x - 14.3x |
+| **FlashInfer** | 12 | 6.7x - 14.3x (norm), passthrough+norm |
 | **Liger** | 3 | 2.2x (1 task), slower (2 tasks) |
 | **causal-conv1d** | 2 | 1.5x - 1.6x |
+| **FlashAttention + FlashInfer** | 4 | TBD (full attention blocks) |
 
 ### Performance (SOTA vs Torch Reference)
 
@@ -59,6 +60,15 @@ uv run sol-execbench data/benchmark/FlashInfer-Bench/021_rmsnorm_h128 \
 | L1_029 mamba_conv1d | causal-conv1d | 1.560 | 2.335 | **1.5x** |
 | L1_085 geglu_activation | Liger | 0.116 | 0.084 | 0.7x |
 | L1_078 group_norm_fusion | Liger | 0.342 | 0.095 | 0.3x |
+
+#### Full Attention Blocks (FlashAttention + FlashInfer combo)
+| Task | Description | Status |
+|---|---|---|
+| L1_015 gqa_rope_qk_norm | GQA + RoPE + QK RMSNorm | ✓ 16/16 PASSED |
+| L1_073 encoder_norm_kv_projection | RMSNorm + KV projection | ✓ 16/16 PASSED |
+| L1_092 gqa_attention_with_qk_norm | Full GQA + QK norm + RoPE + Output | ✓ 16/16 PASSED |
+| L2_018 cu_seqlens_vision_attention | Varlen vision attention | ⚠ 11/16 PASSED |
+| L2_053 text_decoder_layer | Complete decoder layer (Norm+Attn+MLP) | ✓ 16/16 PASSED |
 
 ## Directory Structure
 
