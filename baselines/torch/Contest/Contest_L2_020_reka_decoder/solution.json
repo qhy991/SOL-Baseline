@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l2_020_reka_decoder",
+  "definition": "020_decoder_layer_pre_post_norm_residual",
+  "author": "torch",
+  "description": "Reka-flash-3 decoder (64/8 GQA, h=6144, head_dim=96). Uses Reka's complex-pair RoPE convention (cos/sin of half_head_dim, q=[q1*c-q2*s, q1*s+q2*c]) which differs from rotate-half. FlashInfer rmsnorm + silu_and_mul + torch SDPA.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nimport flashinfer.norm as fn\nimport flashinfer.activation as fa\n\nNQ = 64\nNKV = 8\nHD = 96\nHALF = 48\nH = 6144\nSCALING = HD ** -0.5\n\n\ndef _apply_reka_rope(x, cos_e, sin_e):\n    x1 = x[..., :HALF]\n    x2 = x[..., HALF:]\n    return torch.cat([x1 * cos_e - x2 * sin_e, x1 * sin_e + x2 * cos_e], dim=-1)\n\n\n@torch.no_grad()\ndef run(hidden_states, cos, sin, attention_mask,\n        input_layernorm_weight, q_proj_weight, k_proj_weight, v_proj_weight,\n        o_proj_weight, post_attention_layernorm_weight,\n        gate_proj_weight, up_proj_weight, down_proj_weight, rms_norm_eps):\n    b, s, _ = hidden_states.shape\n    residual = hidden_states\n\n    x_flat = hidden_states.reshape(-1, H).contiguous()\n    normed = fn.rmsnorm(x_flat, input_layernorm_weight, rms_norm_eps).view(b, s, H)\n\n    q = F.linear(normed, q_proj_weight).view(b, s, NQ, HD).transpose(1, 2)\n    k = F.linear(normed, k_proj_weight).view(b, s, NKV, HD).transpose(1, 2)\n    v = F.linear(normed, v_proj_weight).view(b, s, NKV, HD).transpose(1, 2)\n\n    cos_e = cos.unsqueeze(1)  # (b, 1, s, half)\n    sin_e = sin.unsqueeze(1)\n    q = _apply_reka_rope(q, cos_e, sin_e)\n    k = _apply_reka_rope(k, cos_e, sin_e)\n\n    out = F.scaled_dot_product_attention(q, k, v, attn_mask=attention_mask, scale=SCALING, enable_gqa=True)\n    out = out.transpose(1, 2).contiguous().reshape(b, s, NQ * HD)\n    hidden_states = residual + F.linear(out, o_proj_weight)\n\n    residual = hidden_states\n    x_flat = hidden_states.reshape(-1, H).contiguous()\n    normed = fn.rmsnorm(x_flat, post_attention_layernorm_weight, rms_norm_eps).view(b, s, H)\n    gated = torch.cat([F.linear(normed, gate_proj_weight), F.linear(normed, up_proj_weight)], dim=-1)\n    inter_dim = gate_proj_weight.shape[0]\n    intermediate = fa.silu_and_mul(gated.reshape(-1, 2 * inter_dim).contiguous()).view(b, s, inter_dim)\n    return residual + F.linear(intermediate, down_proj_weight)\n"
+    }
+  ]
+}

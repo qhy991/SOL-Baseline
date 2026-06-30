@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l2_007_qwen2vl_mrope_attn",
+  "definition": "007_multimodal_rotary_embedding_attention",
+  "author": "torch",
+  "description": "Qwen2.5-VL 3D mrope GQA (28/4 GQA, h=3584). Custom RoPE combines (cos,sin) from 3 splits [16,24,24]*2 — temporal/height/width. SDPA with custom attn_mask + enable_gqa.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\nNQ = 28\nNKV = 4\nHD = 128\nH = 3584\nSCALING = HD ** -0.5\nMROPE_SEC = [16, 24, 24]\n\n\ndef _rotate_half(x):\n    half = x.shape[-1] // 2\n    return torch.cat((-x[..., half:], x[..., :half]), dim=-1)\n\n\ndef _combine_mrope(cs):\n    splits = cs.split([s * 2 for s in MROPE_SEC], dim=-1)\n    return torch.cat([m[i % 3] for i, m in enumerate(splits)], dim=-1).unsqueeze(1)\n\n\n@torch.no_grad()\ndef run(hidden_states, q_weight, q_bias, k_weight, k_bias, v_weight, v_bias,\n        o_weight, cos, sin, attention_mask):\n    b, s, _ = hidden_states.shape\n    q = F.linear(hidden_states, q_weight, q_bias).view(b, s, NQ, HD).transpose(1, 2)\n    k = F.linear(hidden_states, k_weight, k_bias).view(b, s, NKV, HD).transpose(1, 2)\n    v = F.linear(hidden_states, v_weight, v_bias).view(b, s, NKV, HD).transpose(1, 2)\n\n    cos_c = _combine_mrope(cos)\n    sin_c = _combine_mrope(sin)\n    q = q * cos_c + _rotate_half(q) * sin_c\n    k = k * cos_c + _rotate_half(k) * sin_c\n\n    mask = attention_mask[..., :s]\n    out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=SCALING, enable_gqa=True)\n    out = out.transpose(1, 2).contiguous().reshape(b, s, H)\n    return F.linear(out, o_weight)\n"
+    }
+  ]
+}

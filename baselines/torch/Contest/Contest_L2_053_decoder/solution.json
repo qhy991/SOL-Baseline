@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l2_053_mllama_decoder",
+  "definition": "053_text_decoder_layer_with_self_attention_and_mlp",
+  "author": "torch",
+  "description": "Llama-3.2-Vision text decoder (32/8 GQA, h=4096). Computes RoPE from rope_theta on the fly; FlashInfer rmsnorm x2; torch SDPA (custom attn_mask + enable_gqa); cat-fused gate/up + silu_and_mul; standard residual adds.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nimport flashinfer.norm as fn\nimport flashinfer.activation as fa\n\nNQ = 32\nNKV = 8\nHD = 128\nH = 4096\nSCALING = HD ** -0.5\n\n\ndef _rotate_half(x):\n    half = x.shape[-1] // 2\n    return torch.cat((-x[..., half:], x[..., :half]), dim=-1)\n\n\n@torch.no_grad()\ndef run(hidden_states, attention_mask,\n        q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight,\n        gate_proj_weight, up_proj_weight, down_proj_weight,\n        input_layernorm_weight, post_attention_layernorm_weight,\n        rms_norm_eps, rope_theta):\n    b, s, _ = hidden_states.shape\n    dev = hidden_states.device\n    residual = hidden_states\n\n    x_flat = hidden_states.reshape(-1, H).contiguous()\n    normed = fn.rmsnorm(x_flat, input_layernorm_weight, rms_norm_eps).view(b, s, H)\n\n    q = F.linear(normed, q_proj_weight).view(b, s, NQ, HD).transpose(1, 2)\n    k = F.linear(normed, k_proj_weight).view(b, s, NKV, HD).transpose(1, 2)\n    v = F.linear(normed, v_proj_weight).view(b, s, NKV, HD).transpose(1, 2)\n\n    # Compute cos/sin from rope_theta\n    inv_freq = 1.0 / (rope_theta ** (torch.arange(0, HD, 2, dtype=torch.float32, device=dev) / HD))\n    pos = torch.arange(s, device=dev).float()\n    freqs = torch.outer(pos, inv_freq)\n    emb = torch.cat((freqs, freqs), dim=-1)\n    cos = emb.cos().to(q.dtype)[None, None]\n    sin = emb.sin().to(q.dtype)[None, None]\n    q = q * cos + _rotate_half(q) * sin\n    k = k * cos + _rotate_half(k) * sin\n\n    mask = attention_mask[:, :, :s, :s]\n    out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=SCALING, enable_gqa=True)\n    out = out.transpose(1, 2).contiguous().reshape(b, s, NQ * HD)\n    hidden_states = residual + F.linear(out, o_proj_weight)\n\n    residual = hidden_states\n    x_flat = hidden_states.reshape(-1, H).contiguous()\n    normed = fn.rmsnorm(x_flat, post_attention_layernorm_weight, rms_norm_eps).view(b, s, H)\n    gated = torch.cat([F.linear(normed, gate_proj_weight), F.linear(normed, up_proj_weight)], dim=-1)\n    inter_dim = gate_proj_weight.shape[0]\n    intermediate = fa.silu_and_mul(gated.reshape(-1, 2 * inter_dim).contiguous()).view(b, s, inter_dim)\n    return residual + F.linear(intermediate, down_proj_weight)\n"
+    }
+  ]
+}

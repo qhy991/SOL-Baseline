@@ -1,0 +1,22 @@
+{
+  "name": "flashattn_contest_l2_009_qwen3_coder_decoder_moe",
+  "definition": "009_decoder_layer_with_residual_connections",
+  "author": "flash_attn",
+  "description": "Qwen3-Coder-30B-A3B decoder + MoE (32/4 GQA, h=2048, E=128 top-8). FlashInfer per-head Q/K rmsnorm + FA2 causal native GQA (when bf16) or SDPA fallback; sort+per-expert mm MoE; two residuals.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nimport flashinfer.norm as fn\n\nNQ = 32\nNKV = 4\nHD = 128\nH = 2048\nE = 128\nTOP_K = 8\nSCALING = HD ** -0.5\n\n\ndef _rotate_half(x):\n    half = x.shape[-1] // 2\n    return torch.cat((-x[..., half:], x[..., :half]), dim=-1)\n\n\n@torch.no_grad()\ndef run(hidden_states, cos, sin, attention_mask,\n        input_layernorm_weight, q_proj_weight, q_proj_bias,\n        k_proj_weight, k_proj_bias, v_proj_weight, v_proj_bias,\n        q_norm_weight, k_norm_weight, o_proj_weight, o_proj_bias,\n        post_attention_layernorm_weight,\n        router_weight, expert_gate_weights, expert_up_weights, expert_down_weights,\n        rms_norm_eps):\n    b, s, _ = hidden_states.shape\n    dt = hidden_states.dtype\n    dev = hidden_states.device\n    residual = hidden_states\n\n    x_flat = hidden_states.reshape(-1, H).contiguous()\n    normed = fn.rmsnorm(x_flat, input_layernorm_weight, rms_norm_eps).view(b, s, H)\n\n    q = F.linear(normed, q_proj_weight, q_proj_bias).view(b, s, NQ, HD)\n    k = F.linear(normed, k_proj_weight, k_proj_bias).view(b, s, NKV, HD)\n    v = F.linear(normed, v_proj_weight, v_proj_bias).view(b, s, NKV, HD)\n\n    q = fn.rmsnorm(q.reshape(-1, HD).contiguous(), q_norm_weight, rms_norm_eps).view(b, s, NQ, HD)\n    k = fn.rmsnorm(k.reshape(-1, HD).contiguous(), k_norm_weight, rms_norm_eps).view(b, s, NKV, HD)\n\n    q_t = q.transpose(1, 2)\n    k_t = k.transpose(1, 2)\n    cos_e = cos.unsqueeze(1)\n    sin_e = sin.unsqueeze(1)\n    q_t = q_t * cos_e + _rotate_half(q_t) * sin_e\n    k_t = k_t * cos_e + _rotate_half(k_t) * sin_e\n\n    v_t = v.transpose(1, 2)\n    out = F.scaled_dot_product_attention(q_t, k_t, v_t, attn_mask=attention_mask, scale=SCALING, enable_gqa=True)\n    out = out.transpose(1, 2).contiguous().reshape(b, s, NQ * HD)\n    hidden_states = residual + F.linear(out, o_proj_weight, o_proj_bias)\n\n    residual = hidden_states\n    x_flat = hidden_states.reshape(-1, H).contiguous()\n    normed = fn.rmsnorm(x_flat, post_attention_layernorm_weight, rms_norm_eps)  # (b*s, H)\n\n    # MoE\n    M = normed.shape[0]\n    logits = F.linear(normed, router_weight)\n    probs = F.softmax(logits.float(), dim=1)\n    w_topk, e_topk = torch.topk(probs, TOP_K, dim=-1)\n    w_topk = (w_topk / w_topk.sum(dim=-1, keepdim=True)).to(dt)\n\n    flat_e = e_topk.reshape(-1)\n    flat_tok = torch.arange(M, device=dev).repeat_interleave(TOP_K)\n    flat_w = w_topk.reshape(-1)\n    sort_idx = torch.argsort(flat_e)\n    s_e = flat_e[sort_idx]\n    s_tok = flat_tok[sort_idx]\n    s_w = flat_w[sort_idx]\n\n    counts = torch.bincount(s_e, minlength=E)\n    offsets = torch.cat([torch.zeros(1, dtype=torch.long, device=dev), counts.cumsum(0)])\n    counts_cpu = counts.tolist()\n    offsets_cpu = offsets.tolist()\n\n    x_sorted = normed.index_select(0, s_tok)\n    expert_out = torch.empty_like(x_sorted)\n    for e in range(E):\n        n = counts_cpu[e]\n        if n == 0:\n            continue\n        st = offsets_cpu[e]\n        ed = st + n\n        xe = x_sorted[st:ed]\n        gw = expert_gate_weights[e]\n        uw = expert_up_weights[e]\n        dw = expert_down_weights[e]\n        gate = F.silu(F.linear(xe, gw))\n        up = F.linear(xe, uw)\n        expert_out[st:ed] = F.linear(gate * up, dw)\n\n    weighted = (expert_out * s_w.unsqueeze(-1)).to(dt)\n    moe_out = torch.zeros(M, H, dtype=dt, device=dev)\n    moe_out.index_add_(0, s_tok, weighted)\n    return residual + moe_out.view(b, s, H)\n"
+    }
+  ]
+}

@@ -22,6 +22,22 @@ Pure vectorized chain (`topk(2).sum → topk(4) → scatter → expand mask → 
 
 Reference does `hidden.repeat(E, 1).view(E, T, H)` (explicit replication) then `bmm`. Tried `(1, T, H) @ (E, H, 2D)` broadcast to avoid the materialization — cuBLAS handles both identically and result is **1.01x**. Removed. Real speedup would require a sparse path (which routing_weights doesn't have here — it's dense random) or a fused expert+routing kernel like DeepEP. Not in this environment.
 
+## Contest/L2/002_decoder_layer_full_block (fp32) — torch native already SOTA
+
+DeepHermes-3 Llama-3-8B decoder, **fp32**. F.rms_norm + F.scaled_dot_product_attention (cuDNN, enable_gqa) + F.silu fused MLP gets **1.00x** — the reference's manual variance/rotate-half/matmul chain compiles to the same kernels via PyTorch's codegen. FlashInfer kernels are bf16-only so no FP8/normfusion fallback. Removed.
+
+## Contest/L2/004_fused_residual_rms_mlp — 1.02x bandwidth-bound
+
+h=16384, inter=53248. FlashInfer rmsnorm + cat-fused gate/up + silu_and_mul vs reference's straight torch chain. **1.02x mean** — reference is already memory-bound on (residual+hidden) read and the three GEMM stages dominate. Removed.
+
+## Contest/L2/019_decoder_layer_fused_attention_mlp (fp32) — torch SDPA == reference
+
+Qwen-Image-Edit fp32 decoder with 3D mrope. FA2 is bf16-only so we use F.scaled_dot_product_attention (cuDNN backend) — **0.99x**. Same conclusion as L2/002 (fp32 reference already calls fused cuDNN kernels). Removed.
+
+## Contest/L2/006 + L2/049 — not attempted
+
+L2/006 is per-batch Python loops over image/video token indices for multimodal mrope position IDs — workload-specific structure makes any rewrite fragile and the reference's CPU-control-flow dominates the GPU work. L2/049 is purely vectorized routing math (router GEMM + sigmoid + group topk + mask + final topk + normalize) — every stage is already a single CUDA kernel. Both deferred.
+
 ## Contest/L1/063_attention_output_reshape_and_projection — pure cuBLAS, reference optimal
 
 `transpose(1,2).reshape(b,s,H*D) @ o_proj_weight.t()` — reference is a single `F.linear` after a contiguous reshape. **1.00x measured (0.98x–1.03x)**. No SOTA library improves on cuBLAS GEMM for this shape; the contiguous reshape is bandwidth-bound. Removed.

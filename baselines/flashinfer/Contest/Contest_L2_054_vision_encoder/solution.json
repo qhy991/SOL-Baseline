@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_l2_054_vision_encoder",
+  "definition": "054_vision_encoder_layer_with_gated_residuals",
+  "author": "flashinfer",
+  "description": "Llama-3.2-Vision vision encoder block (16 heads, h=1280). Replaces manual LN with FlashInfer layernorm; SDPA for self-attn (no mask, no GQA); tanh-gated residual adds; FC1+GELU+FC2 MLP.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nimport flashinfer.norm as fn\n\nNH = 16\nH = 1280\nHD = H // NH\nSCALING = HD ** -0.5\n\n\n@torch.no_grad()\ndef run(hidden_state, input_layernorm_weight, input_layernorm_bias,\n        q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight,\n        post_attention_layernorm_weight, post_attention_layernorm_bias,\n        fc1_weight, fc1_bias, fc2_weight, fc2_bias, gate_attn, gate_ffn, norm_eps):\n    b, s, _ = hidden_state.shape\n    residual = hidden_state\n\n    x_flat = hidden_state.reshape(-1, H).contiguous()\n    normed = fn.layernorm(x_flat, input_layernorm_weight.float().contiguous(),\n                           input_layernorm_bias.float().contiguous(), norm_eps).view(b, s, H)\n\n    q = F.linear(normed, q_proj_weight).view(b, s, NH, HD).transpose(1, 2)\n    k = F.linear(normed, k_proj_weight).view(b, s, NH, HD).transpose(1, 2)\n    v = F.linear(normed, v_proj_weight).view(b, s, NH, HD).transpose(1, 2)\n\n    out = F.scaled_dot_product_attention(q, k, v, scale=SCALING)\n    out = out.transpose(1, 2).contiguous().reshape(b, s, H)\n    attn_out = F.linear(out, o_proj_weight)\n    hidden_state = residual + torch.tanh(gate_attn) * attn_out\n\n    residual = hidden_state\n    x_flat = hidden_state.reshape(-1, H).contiguous()\n    normed = fn.layernorm(x_flat, post_attention_layernorm_weight.float().contiguous(),\n                           post_attention_layernorm_bias.float().contiguous(), norm_eps).view(b, s, H)\n\n    mlp = F.linear(F.gelu(F.linear(normed, fc1_weight, fc1_bias)), fc2_weight, fc2_bias)\n    return residual + torch.tanh(gate_ffn) * mlp\n"
+    }
+  ]
+}
