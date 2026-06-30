@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l2_008_moe_routing_dispatch",
+  "definition": "008_moe_sparse_routing_and_dispatch",
+  "author": "torch",
+  "description": "Qwen3-30B MoE full forward: gate logits -> softmax-topk-8 (with optional norm) -> sort+per-expert mm SwiGLU -> weighted bf16 index_add. Skips reference's 128-expert one_hot scan.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\nTOP_K = 8\n\n\n@torch.no_grad()\ndef run(hidden_states, gate_weight,\n        expert_gate_proj, expert_up_proj, expert_down_proj, norm_topk_prob):\n    b, s, H = hidden_states.shape\n    x = hidden_states.view(-1, H)\n    M = x.shape[0]\n    E = gate_weight.shape[0]\n    dt = x.dtype\n    dev = x.device\n\n    logits = x @ gate_weight.t()\n    probs = F.softmax(logits.float(), dim=1).to(dt)\n    w_topk, e_topk = torch.topk(probs, TOP_K, dim=-1)\n    if norm_topk_prob:\n        w_topk = w_topk / (w_topk.sum(dim=-1, keepdim=True) + 1e-9)\n\n    flat_e = e_topk.reshape(-1)\n    flat_tok = torch.arange(M, device=dev).repeat_interleave(TOP_K)\n    flat_w = w_topk.reshape(-1)\n\n    sort_idx = torch.argsort(flat_e)\n    s_e = flat_e[sort_idx]\n    s_tok = flat_tok[sort_idx]\n    s_w = flat_w[sort_idx]\n\n    counts = torch.bincount(s_e, minlength=E)\n    offsets = torch.cat([torch.zeros(1, dtype=torch.long, device=dev), counts.cumsum(0)])\n    counts_cpu = counts.tolist()\n    offsets_cpu = offsets.tolist()\n\n    x_sorted = x.index_select(0, s_tok)\n    expert_out = torch.empty_like(x_sorted)\n\n    for e in range(E):\n        n = counts_cpu[e]\n        if n == 0:\n            continue\n        st = offsets_cpu[e]\n        ed = st + n\n        xe = x_sorted[st:ed]\n        g = xe @ expert_gate_proj[e].t()\n        u = xe @ expert_up_proj[e].t()\n        inter = F.silu(g) * u\n        expert_out[st:ed] = inter @ expert_down_proj[e].t()\n\n    weighted = (expert_out * s_w.unsqueeze(-1)).to(dt)\n    out = torch.zeros(M, H, dtype=dt, device=dev)\n    out.index_add_(0, s_tok, weighted)\n    return out.view(b, s, H)\n"
+    }
+  ]
+}

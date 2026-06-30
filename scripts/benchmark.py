@@ -122,8 +122,11 @@ def main():
 
         # Find problem directory
         problem_dir = None
-        for cat in ["L1", "L2", "Quant"]:
-            for d in (BENCHMARK / cat).iterdir():
+        for cat in ["FlashInfer-Bench", "L1", "L2", "Quant", "Contest"]:
+            cat_dir = BENCHMARK / cat
+            if not cat_dir.exists():
+                continue
+            for d in cat_dir.iterdir():
                 if d.is_dir() and d.name.endswith(def_name):
                     problem_dir = d
                     break

@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l2_065_gptoss_moe",
+  "definition": "065_sparse_expert_dispatch_and_combine",
+  "author": "torch",
+  "description": "gpt-oss-120b fp32 MoE: merged gate_up [E, H, 2*I], interleaved gate/up split, clamped sigmoid-GLU (alpha=1.702, limit=7.0), biases on both projs, masking class at index num_experts. Sort+per-expert mm.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\n\nALPHA = 1.702\nLIMIT = 7.0\n\n\n@torch.no_grad()\ndef run(hidden_states, router_indices, routing_weights,\n        gate_up_proj, gate_up_proj_bias, down_proj, down_proj_bias):\n    M, H = hidden_states.shape\n    E = gate_up_proj.shape[0]\n    K = router_indices.shape[1]\n    dev = hidden_states.device\n\n    flat_e = router_indices.reshape(-1)\n    flat_tok = torch.arange(M, device=dev).repeat_interleave(K)\n\n    # Drop masking-class assignments (index == E)\n    keep = flat_e < E\n    flat_e = flat_e[keep]\n    flat_tok = flat_tok[keep]\n\n    sort_idx = torch.argsort(flat_e)\n    s_e = flat_e[sort_idx]\n    s_tok = flat_tok[sort_idx]\n    # routing weight for each (token, expert) pair\n    s_w = routing_weights[s_tok, s_e]\n\n    counts = torch.bincount(s_e, minlength=E)\n    offsets = torch.cat([torch.zeros(1, dtype=torch.long, device=dev), counts.cumsum(0)])\n    counts_cpu = counts.tolist()\n    offsets_cpu = offsets.tolist()\n\n    x_sorted = hidden_states.index_select(0, s_tok)\n    output = torch.zeros_like(hidden_states)\n\n    for e in range(E):\n        n = counts_cpu[e]\n        if n == 0:\n            continue\n        st = offsets_cpu[e]\n        ed = st + n\n        xe = x_sorted[st:ed]\n        gu = xe @ gate_up_proj[e] + gate_up_proj_bias[e]\n        gate = gu[..., ::2].clamp(max=LIMIT)\n        up = gu[..., 1::2].clamp(min=-LIMIT, max=LIMIT)\n        glu = gate * torch.sigmoid(gate * ALPHA)\n        gated = (up + 1) * glu\n        expert_out = gated @ down_proj[e] + down_proj_bias[e]\n        weighted = expert_out * s_w[st:ed].unsqueeze(-1)\n        output.index_add_(0, s_tok[st:ed], weighted)\n    return output\n"
+    }
+  ]
+}

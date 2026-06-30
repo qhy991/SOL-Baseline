@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_fib_013_gqa_paged_decode",
+  "definition": "013_gqa_paged_decode_h32_kv8_d128_ps1",
+  "author": "flashinfer",
+  "description": "Llama-3.1-8B GQA paged decode via flashinfer.BatchDecodeWithPagedKVCacheWrapper. page_size=1 -> last_page_len is all-1; LSE returned as base-e, divide by log(2) to match reference's base-2 convention.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import math\nimport torch\nimport flashinfer\n\n_WS = None\n_W = None\n\n\ndef _get_wrapper(device):\n    global _WS, _W\n    if _W is None:\n        _WS = torch.empty(128 * 1024 * 1024, dtype=torch.uint8, device=device)\n        _W = flashinfer.BatchDecodeWithPagedKVCacheWrapper(_WS, 'NHD')\n    return _W\n\n\n@torch.no_grad()\ndef run(q, k_cache, v_cache, kv_indptr, kv_indices, sm_scale):\n    b = q.shape[0]\n    w = _get_wrapper(q.device)\n    last_page_len = torch.ones(b, dtype=torch.int32, device=q.device)\n    w.plan(\n        indptr=kv_indptr,\n        indices=kv_indices,\n        last_page_len=last_page_len,\n        num_qo_heads=32,\n        num_kv_heads=8,\n        head_dim=128,\n        page_size=1,\n        q_data_type=q.dtype,\n        kv_data_type=k_cache.dtype,\n        sm_scale=sm_scale,\n    )\n    output, lse = w.run(q, (k_cache, v_cache), return_lse=True)\n    return output, lse.float()\n"
+    }
+  ]
+}

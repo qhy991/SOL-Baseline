@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_fib_002_fused_add_rmsnorm_h4096",
+  "definition": "002_fused_add_rmsnorm_h4096",
+  "author": "flashinfer",
+  "description": "FlashInfer rmsnorm on residual+hidden (h=4096, eps=1e-5). Avoids fused_add_rmsnorm's in-place semantics by doing the add explicitly.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.norm as fn\n\n\n@torch.no_grad()\ndef run(hidden_states, residual, weight):\n    x = (residual + hidden_states).contiguous()\n    return fn.rmsnorm(x, weight, 1e-5)\n"
+    }
+  ]
+}

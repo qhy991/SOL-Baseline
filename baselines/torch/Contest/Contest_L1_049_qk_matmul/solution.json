@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l1_049_qk_matmul",
+  "definition": "049_attention_qk_matmul_with_gqa_repeat_and_scaling",
+  "author": "torch",
+  "description": "Q@K^T with GQA + scaling. Reference upcasts both to fp32; we use bf16 matmul (cuBLAS native bf16->fp32 accumulation) and rely on cuBLAS-internal fp32 accumulator. Falls within tol on bf16 inputs.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\n\nNQ = 4\nNKV = 1\n\n\n@torch.no_grad()\ndef run(query, key, scaling):\n    b, _, slen, d = key.shape\n    n_rep = NQ // NKV\n    k_expanded = key[:, :, None, :, :].expand(b, NKV, n_rep, slen, d).reshape(b, NQ, slen, d)\n    return (torch.matmul(query, k_expanded.transpose(2, 3)) * scaling).to(query.dtype)\n"
+    }
+  ]
+}

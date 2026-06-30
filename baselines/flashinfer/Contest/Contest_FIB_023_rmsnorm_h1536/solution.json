@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_fib_023_rmsnorm_h1536",
+  "definition": "023_rmsnorm_h1536",
+  "author": "flashinfer",
+  "description": "Plain FlashInfer rmsnorm (h=1536, eps=1e-6).",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.norm as fn\n\n\n@torch.no_grad()\ndef run(hidden_states, weight):\n    return fn.rmsnorm(hidden_states.contiguous(), weight, 1e-6)\n"
+    }
+  ]
+}

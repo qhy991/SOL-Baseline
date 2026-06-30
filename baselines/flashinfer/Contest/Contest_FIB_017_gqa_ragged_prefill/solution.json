@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_fib_017_gqa_ragged_prefill",
+  "definition": "017_gqa_ragged_prefill_causal_h32_kv8_d128",
+  "author": "flashinfer",
+  "description": "Llama-3.1-8B GQA ragged prefill (causal) via flashinfer.BatchPrefillWithRaggedKVCacheWrapper. LSE is returned in base-2 already; reference also uses base-2 so no conversion.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer\n\n_WS = None\n_W = None\n\n\ndef _get_wrapper(device):\n    global _WS, _W\n    if _W is None:\n        _WS = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device=device)\n        _W = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(_WS, 'NHD')\n    return _W\n\n\n@torch.no_grad()\ndef run(q, k, v, qo_indptr, kv_indptr, sm_scale):\n    w = _get_wrapper(q.device)\n    w.plan(\n        qo_indptr=qo_indptr,\n        kv_indptr=kv_indptr,\n        num_qo_heads=32,\n        num_kv_heads=8,\n        head_dim_qk=128,\n        head_dim_vo=128,\n        causal=True,\n        q_data_type=q.dtype,\n        kv_data_type=k.dtype,\n        sm_scale=sm_scale,\n    )\n    output, lse = w.run(q, k, v, return_lse=True)\n    return output, lse.float()\n"
+    }
+  ]
+}

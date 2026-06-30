@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l2_082_moe_complete",
+  "definition": "082_moe_layer_complete_forward_with_residual",
+  "author": "torch",
+  "description": "GLM-4.7 MoE (E=160, top-8): same as 081 but accumulation kept in fp32 (reference doesn't cast topk_weights to bf16 before index_add), with optional norm_topk_prob.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\nTOP_K = 8\nN_EXPERTS = 160\n\n\n@torch.no_grad()\ndef run(hidden_states, router_weight, e_score_correction_bias,\n        expert_gate_projs, expert_up_projs, expert_down_projs,\n        shared_gate_proj_weight, shared_up_proj_weight, shared_down_proj_weight,\n        routed_scaling_factor, norm_topk_prob):\n    M, H = hidden_states.shape\n    dt = hidden_states.dtype\n    dev = hidden_states.device\n\n    logits = F.linear(hidden_states.float(), router_weight.float())\n    scores = torch.sigmoid(logits)\n    scores_for_choice = scores + e_score_correction_bias.unsqueeze(0)\n    topk_w, topk_idx = torch.topk(scores_for_choice, k=TOP_K, dim=-1, sorted=False)\n    if norm_topk_prob:\n        topk_w = topk_w / (topk_w.sum(dim=-1, keepdim=True) + 1e-20)\n    topk_w = topk_w * routed_scaling_factor  # stays fp32 (reference does NOT cast)\n\n    flat_e = topk_idx.reshape(-1)\n    flat_tok = torch.arange(M, device=dev).repeat_interleave(TOP_K)\n    flat_w = topk_w.reshape(-1)\n\n    sort_idx = torch.argsort(flat_e)\n    s_e = flat_e[sort_idx]\n    s_tok = flat_tok[sort_idx]\n    s_w = flat_w[sort_idx]\n\n    counts = torch.bincount(s_e, minlength=N_EXPERTS)\n    offsets = torch.cat([torch.zeros(1, dtype=torch.long, device=dev), counts.cumsum(0)])\n    counts_cpu = counts.tolist()\n    offsets_cpu = offsets.tolist()\n\n    x_sorted = hidden_states.index_select(0, s_tok)\n    expert_out = torch.empty_like(x_sorted)\n\n    for e in range(N_EXPERTS):\n        n = counts_cpu[e]\n        if n == 0:\n            continue\n        st = offsets_cpu[e]\n        ed = st + n\n        xe = x_sorted[st:ed]\n        g = F.silu(F.linear(xe, expert_gate_projs[e]))\n        u = F.linear(xe, expert_up_projs[e])\n        inter = g * u\n        expert_out[st:ed] = F.linear(inter, expert_down_projs[e])\n\n    weighted = expert_out.float() * s_w.unsqueeze(-1)\n    routed_fp32 = torch.zeros(M, H, dtype=torch.float32, device=dev)\n    routed_fp32.index_add_(0, s_tok, weighted)\n    routed = routed_fp32.to(dt)\n\n    sg = F.silu(F.linear(hidden_states, shared_gate_proj_weight))\n    su = F.linear(hidden_states, shared_up_proj_weight)\n    shared_out = F.linear(sg * su, shared_down_proj_weight)\n\n    return routed + shared_out\n"
+    }
+  ]
+}

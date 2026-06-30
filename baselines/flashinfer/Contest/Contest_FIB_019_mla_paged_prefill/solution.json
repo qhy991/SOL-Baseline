@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_fib_019_mla_paged_prefill",
+  "definition": "019_mla_paged_prefill_causal_h16_ckv512_kpe64_ps1",
+  "author": "flashinfer",
+  "description": "DeepSeek-V3 MLA paged prefill (causal) via flashinfer.mla.BatchMLAPagedAttentionWrapper. qo_indptr taken from input; kv_len_arr derived from kv_indptr diffs.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer\n\n_WS = None\n_W = None\n\n\ndef _get_wrapper(device):\n    global _WS, _W\n    if _W is None:\n        _WS = torch.empty(256 * 1024 * 1024, dtype=torch.uint8, device=device)\n        _W = flashinfer.mla.BatchMLAPagedAttentionWrapper(_WS)\n    return _W\n\n\n@torch.no_grad()\ndef run(q_nope, q_pe, ckv_cache, kpe_cache, qo_indptr, kv_indptr, kv_indices, sm_scale):\n    dev = q_nope.device\n    w = _get_wrapper(dev)\n    kv_len_arr = (kv_indptr[1:] - kv_indptr[:-1]).to(torch.int32)\n    w.plan(\n        qo_indptr=qo_indptr,\n        kv_indptr=kv_indptr,\n        kv_indices=kv_indices,\n        kv_len_arr=kv_len_arr,\n        num_heads=16,\n        head_dim_ckv=512,\n        head_dim_kpe=64,\n        page_size=1,\n        causal=True,\n        sm_scale=sm_scale,\n        q_data_type=q_nope.dtype,\n        kv_data_type=ckv_cache.dtype,\n    )\n    output, lse = w.run(q_nope, q_pe, ckv_cache, kpe_cache, return_lse=True)\n    return output, lse.float()\n"
+    }
+  ]
+}

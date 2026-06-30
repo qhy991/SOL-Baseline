@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_l1_069_rms_norm",
+  "definition": "069_rms_norm",
+  "author": "flashinfer",
+  "description": "FlashInfer fused_add_rmsnorm baseline for Contest/L1_069 (Llama-3.3-Nemotron-70B residual+RMSNorm, h=8192).",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.norm\n\n\n@torch.no_grad()\ndef run(hidden_states, residual, weight, eps):\n    b, s, h = hidden_states.shape\n    x = (residual + hidden_states).reshape(-1, h).contiguous()\n    out = flashinfer.norm.rmsnorm(x, weight, eps)\n    return out.reshape(b, s, h)\n"
+    }
+  ]
+}

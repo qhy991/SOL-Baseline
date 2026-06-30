@@ -18,7 +18,7 @@ BENCHMARK_DIR = Path("data/benchmark")
 
 def find_problem_dir(definition_name):
     """Find the problem directory for a given definition."""
-    for cat in ["FlashInfer-Bench", "L1", "L2", "Quant"]:
+    for cat in ["FlashInfer-Bench", "L1", "L2", "Quant", "Contest"]:
         cat_dir = BENCHMARK_DIR / cat
         if not cat_dir.exists():
             continue

@@ -1,0 +1,22 @@
+{
+  "name": "flashattn_contest_l1_092_gqa_qknorm",
+  "definition": "092_gqa_attention_with_qk_norm",
+  "author": "flash_attn",
+  "description": "GLM-4.5-Air full GQA causal attention block (96/8 GQA): F.linear with biases for QKV, FlashInfer rmsnorm on Q/K, RoPE, FlashAttention 2 causal native GQA, F.linear for O.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nimport flashinfer.norm as fn\nfrom flash_attn import flash_attn_func\n\nNQ = 96\nNKV = 8\nHD = 128\nSCALING = HD ** -0.5\n\n\ndef _rotate_half(x):\n    half = x.shape[-1] // 2\n    return torch.cat((-x[..., half:], x[..., :half]), dim=-1)\n\n\n@torch.no_grad()\ndef run(hidden_states, q_proj_weight, q_proj_bias, k_proj_weight, k_proj_bias,\n        v_proj_weight, v_proj_bias, o_proj_weight,\n        q_norm_weight, k_norm_weight, cos, sin, rms_norm_eps):\n    b, s, h = hidden_states.shape\n\n    q = F.linear(hidden_states, q_proj_weight, q_proj_bias).view(b, s, NQ, HD)\n    k = F.linear(hidden_states, k_proj_weight, k_proj_bias).view(b, s, NKV, HD)\n    v = F.linear(hidden_states, v_proj_weight, v_proj_bias).view(b, s, NKV, HD)\n\n    q = fn.rmsnorm(q.reshape(-1, HD).contiguous(), q_norm_weight, rms_norm_eps).view(b, s, NQ, HD)\n    k = fn.rmsnorm(k.reshape(-1, HD).contiguous(), k_norm_weight, rms_norm_eps).view(b, s, NKV, HD)\n\n    # RoPE in (B, H, S, D) layout (reference convention), then back to (B, S, H, D) for FA2\n    q_t = q.transpose(1, 2)\n    k_t = k.transpose(1, 2)\n    cos_e = cos.unsqueeze(1)\n    sin_e = sin.unsqueeze(1)\n    q_t = q_t * cos_e + _rotate_half(q_t) * sin_e\n    k_t = k_t * cos_e + _rotate_half(k_t) * sin_e\n    q = q_t.transpose(1, 2).contiguous()\n    k = k_t.transpose(1, 2).contiguous()\n\n    out = flash_attn_func(q, k, v, causal=True, softmax_scale=SCALING)\n    out = out.reshape(b, s, NQ * HD)\n    return F.linear(out, o_proj_weight)\n"
+    }
+  ]
+}

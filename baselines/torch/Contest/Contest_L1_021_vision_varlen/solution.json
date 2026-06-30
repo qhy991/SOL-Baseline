@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l1_021_vision_varlen",
+  "definition": "021_vision_cu_seqlens_variable_length_attention",
+  "author": "torch",
+  "description": "Qwen3-VL fp32 vision cu_seqlens attention. Adaptive: total_seq_len < 2500 uses block-diag mask + single F.scaled_dot_product_attention call; total_seq_len >= 2500 falls back to per-sequence SDPA loop (avoid O(N^2) mask). Ports the sol-baseline upstream L1_021 strategy.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\nNH = 16\nHD = 80\nHIDDEN = 1280\nSCALE = HD ** -0.5\nTHRESHOLD = 2500\n\n\ndef _rotate_half(x):\n    half = x.shape[-1] // 2\n    return torch.cat((-x[..., half:], x[..., :half]), dim=-1)\n\n\n@torch.no_grad()\ndef run(hidden_states, cu_seqlens, cos, sin, qkv_weight, qkv_bias,\n        proj_weight, proj_bias):\n    N = hidden_states.shape[0]\n    qkv = F.linear(hidden_states, qkv_weight, qkv_bias).view(N, 3, NH, HD)\n    q, k, v = qkv.unbind(dim=1)\n\n    cos_e = cos.unsqueeze(1)  # (N, 1, HD)\n    sin_e = sin.unsqueeze(1)\n    q = q * cos_e + _rotate_half(q) * sin_e\n    k = k * cos_e + _rotate_half(k) * sin_e\n\n    if N < THRESHOLD:\n        # Build block-diagonal mask (N, N)\n        seg_id = torch.zeros(N, dtype=torch.int32, device=hidden_states.device)\n        cs = cu_seqlens.tolist()\n        for i in range(len(cs) - 1):\n            seg_id[cs[i]:cs[i + 1]] = i\n        mask = (seg_id.unsqueeze(0) == seg_id.unsqueeze(1))  # bool (N, N)\n        attn_mask = torch.zeros(N, N, dtype=hidden_states.dtype, device=hidden_states.device).masked_fill(~mask, float('-inf'))\n        # SDPA expects (B, H, S, D)\n        q_ = q.transpose(0, 1).unsqueeze(0)\n        k_ = k.transpose(0, 1).unsqueeze(0)\n        v_ = v.transpose(0, 1).unsqueeze(0)\n        out = F.scaled_dot_product_attention(q_, k_, v_, attn_mask=attn_mask, scale=SCALE)\n        out = out.squeeze(0).transpose(0, 1).contiguous()\n    else:\n        outs = []\n        cs = cu_seqlens.tolist()\n        for i in range(len(cs) - 1):\n            s, e = cs[i], cs[i + 1]\n            if s == e:\n                continue\n            qi = q[s:e].transpose(0, 1).unsqueeze(0)\n            ki = k[s:e].transpose(0, 1).unsqueeze(0)\n            vi = v[s:e].transpose(0, 1).unsqueeze(0)\n            o = F.scaled_dot_product_attention(qi, ki, vi, scale=SCALE)\n            outs.append(o.squeeze(0).transpose(0, 1))\n        out = torch.cat(outs, dim=0)\n\n    out = out.reshape(N, NH * HD)\n    return F.linear(out, proj_weight, proj_bias)\n"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_quant_016_fp8_mla_qkv",
+  "definition": "016_fp8_multi_latent_attention_qkv_projection",
+  "author": "flashinfer",
+  "description": "FP8 DeepSeek-V3 MLA QKV: Q low-rank (q_a -> RMSNorm -> q_b -> split nope/pe), KV low-rank (kv_a -> split -> RMSNorm -> kv_b -> split nope/value). All four GEMMs via flashinfer.gemm.gemm_fp8_nt_groupwise; norms via flashinfer.rmsnorm.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.gemm as fg\nimport flashinfer.norm as fn\n\nE4M3_MAX = 448.0\nNUM_HEADS = 128\nQ_LORA = 1536\nKV_LORA = 512\nQK_ROPE = 64\nQK_NOPE = 128\nV_HEAD = 128\nQ_HEAD_DIM = 192\n\n\ndef _q_act_1x128(x_bf16):\n    M, K = x_bf16.shape\n    x_f32 = x_bf16.to(torch.float32).reshape(M, K // 128, 128)\n    amax = x_f32.abs().amax(dim=2)\n    scale = (amax / E4M3_MAX).clamp(min=1e-12)\n    qx = (x_f32 / scale.unsqueeze(-1)).clamp(-E4M3_MAX, E4M3_MAX)\n    qx = qx.reshape(M, K).to(torch.float8_e4m3fn)\n    return qx, scale.t().contiguous()\n\n\ndef _q_w_128x128(w_bf16):\n    N, K = w_bf16.shape\n    blocks = w_bf16.to(torch.float32).reshape(N // 128, 128, K // 128, 128)\n    amax = blocks.abs().amax(dim=(1, 3))\n    scale = (amax / E4M3_MAX).clamp(min=1e-12)\n    qw = (blocks / scale[:, None, :, None]).clamp(-E4M3_MAX, E4M3_MAX)\n    qw = qw.reshape(N, K).to(torch.float8_e4m3fn)\n    return qw, scale.t().contiguous()\n\n\ndef _fp8_matmul(x_bf16, w_bf16):\n    qx, sx = _q_act_1x128(x_bf16)\n    qw, sw = _q_w_128x128(w_bf16)\n    return fg.gemm_fp8_nt_groupwise(\n        qx, qw, sx, sw,\n        scale_granularity_mnk=(1, 128, 128),\n        scale_major_mode='MN',\n        out_dtype=torch.bfloat16,\n    )\n\n\n@torch.no_grad()\ndef run(hidden_states, q_a_proj_weight, q_a_layernorm_weight, q_b_proj_weight,\n        kv_a_proj_weight, kv_a_layernorm_weight, kv_b_proj_weight, rms_norm_eps):\n    b, s, h = hidden_states.shape\n    x = hidden_states.reshape(-1, h).contiguous()\n\n    # Q path\n    q_a = _fp8_matmul(x, q_a_proj_weight)                          # (M, Q_LORA)\n    q_a_norm = fn.rmsnorm(q_a, q_a_layernorm_weight, rms_norm_eps)\n    q = _fp8_matmul(q_a_norm, q_b_proj_weight)                     # (M, NUM_HEADS*Q_HEAD_DIM)\n    q = q.reshape(b, s, NUM_HEADS, Q_HEAD_DIM)\n    q_nope = q[..., :QK_NOPE].contiguous()\n    q_pe = q[..., QK_NOPE:].contiguous()\n\n    # KV path\n    kv_a = _fp8_matmul(x, kv_a_proj_weight)                        # (M, 640)\n    compressed = kv_a[:, :KV_LORA].contiguous()\n    k_pe_flat = kv_a[:, KV_LORA:KV_LORA + QK_ROPE].contiguous()\n    k_pe = k_pe_flat.reshape(b, s, 1, QK_ROPE).contiguous()\n    c_norm = fn.rmsnorm(compressed, kv_a_layernorm_weight, rms_norm_eps)\n    kv = _fp8_matmul(c_norm, kv_b_proj_weight)                     # (M, NUM_HEADS*(QK_NOPE+V_HEAD))\n    kv = kv.reshape(b, s, NUM_HEADS, QK_NOPE + V_HEAD)\n    k_nope = kv[..., :QK_NOPE].contiguous()\n    value_states = kv[..., QK_NOPE:].contiguous()\n\n    return q_nope, q_pe, k_nope, k_pe, value_states\n"
+    }
+  ]
+}

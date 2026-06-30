@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_l1_048_swiglu_geluTanh",
+  "definition": "048_fused_gate_up_projection_with_swiglu",
+  "author": "flashinfer",
+  "description": "Two GEMMs writing into adjacent halves of a fused activation buffer, then flashinfer gelu_tanh_and_mul. Avoids weight-concat overhead while still doing a single fused activation.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.activation as fia\n\n_BUF = {}\n\n\ndef _gated_buf(rows, inter, dtype, device):\n    key = (rows, inter, dtype, device)\n    buf = _BUF.get(key)\n    if buf is None or buf.shape != (rows, 2 * inter):\n        buf = torch.empty(rows, 2 * inter, dtype=dtype, device=device)\n        _BUF[key] = buf\n    return buf\n\n\n@torch.no_grad()\ndef run(x, gate_proj, up_proj):\n    b, s, h = x.shape\n    inter = gate_proj.shape[0]\n    x_flat = x.reshape(-1, h)\n    rows = x_flat.shape[0]\n    gated = _gated_buf(rows, inter, x.dtype, x.device)\n    torch.matmul(x_flat, gate_proj.t(), out=gated[:, :inter])\n    torch.matmul(x_flat, up_proj.t(), out=gated[:, inter:])\n    out = fia.gelu_tanh_and_mul(gated)\n    return out.reshape(b, s, inter)\n"
+    }
+  ]
+}

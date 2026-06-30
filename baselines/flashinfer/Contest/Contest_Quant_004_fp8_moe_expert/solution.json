@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_quant_004_fp8_moe_expert_linear",
+  "definition": "004_fp8_moe_expert_linear",
+  "author": "flashinfer",
+  "description": "FP8 MoE single-expert MLP: quantize bf16 inputs blockwise, two FP8 GEMMs (gate_up + down) via flashinfer.gemm.gemm_fp8_nt_groupwise, apply routing weight.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nimport flashinfer.gemm as fg\n\nE4M3_MAX = 448.0\n\n\ndef _q_act_1x128(x_bf16):\n    M, K = x_bf16.shape\n    x_f32 = x_bf16.to(torch.float32).reshape(M, K // 128, 128)\n    amax = x_f32.abs().amax(dim=2)\n    scale = (amax / E4M3_MAX).clamp(min=1e-12)\n    qx = (x_f32 / scale.unsqueeze(-1)).clamp(-E4M3_MAX, E4M3_MAX)\n    qx = qx.reshape(M, K).to(torch.float8_e4m3fn)\n    return qx, scale.t().contiguous()\n\n\ndef _q_w_128x128(w_bf16):\n    N, K = w_bf16.shape\n    blocks = w_bf16.to(torch.float32).reshape(N // 128, 128, K // 128, 128)\n    amax = blocks.abs().amax(dim=(1, 3))\n    scale = (amax / E4M3_MAX).clamp(min=1e-12)\n    qw = (blocks / scale[:, None, :, None]).clamp(-E4M3_MAX, E4M3_MAX)\n    qw = qw.reshape(N, K).to(torch.float8_e4m3fn)\n    return qw, scale.t().contiguous()\n\n\ndef _fp8_matmul(x_bf16, w_bf16):\n    qx, sx = _q_act_1x128(x_bf16)\n    qw, sw = _q_w_128x128(w_bf16)\n    return fg.gemm_fp8_nt_groupwise(\n        qx, qw, sx, sw,\n        scale_granularity_mnk=(1, 128, 128),\n        scale_major_mode='MN',\n        out_dtype=torch.bfloat16,\n    )\n\n\n@torch.no_grad()\ndef run(hidden_states, routing_weight, gate_up_weight, down_weight):\n    gu = _fp8_matmul(hidden_states, gate_up_weight)\n    gate, up = gu.chunk(2, dim=-1)\n    intermediate = (F.silu(gate) * up).contiguous()\n    out = _fp8_matmul(intermediate, down_weight)\n    return out * routing_weight\n"
+    }
+  ]
+}

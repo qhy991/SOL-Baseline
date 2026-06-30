@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_quant_005_fp8_router",
+  "definition": "005_fp8_moe_router_projection",
+  "author": "flashinfer",
+  "description": "FP8 router projection via flashinfer.gemm.gemm_fp8_nt_groupwise (1x128/128x128), padded_experts=128, slice to num_experts=64.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.gemm as fg\n\nNUM_EXPERTS = 64\n\n\n@torch.no_grad()\ndef run(hidden_states, gate_weight, scale_hidden, scale_weight):\n    sx = scale_hidden.t().contiguous()\n    sw = scale_weight.t().contiguous()\n    out = fg.gemm_fp8_nt_groupwise(\n        hidden_states, gate_weight, sx, sw,\n        scale_granularity_mnk=(1, 128, 128),\n        scale_major_mode='MN',\n        out_dtype=torch.bfloat16,\n    )\n    return out[:, :NUM_EXPERTS].contiguous()\n"
+    }
+  ]
+}

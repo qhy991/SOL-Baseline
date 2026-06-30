@@ -1,0 +1,6 @@
+{
+  "warmup_runs": 5,
+  "iterations": 10,
+  "benchmark_reference": false,
+  "seed": 200
+}

@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l2_013_moe_shared",
+  "definition": "013_expert_weighted_aggregation_with_shared_expert",
+  "author": "torch",
+  "description": "Qwen3-Next MoE (E=512, top-10) routed expert sort+per-expert mm, plus sigmoid-gated shared expert. Reference loops over all 512 experts; baseline skips empties via sorted counts.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\n\n@torch.no_grad()\ndef run(hidden_states, routing_weights, selected_experts,\n        expert_gate_proj_weights, expert_up_proj_weights, expert_down_proj_weights,\n        shared_expert_gate_proj_weight, shared_expert_up_proj_weight,\n        shared_expert_down_proj_weight, shared_expert_gate_weight):\n    M, H = hidden_states.shape\n    E = expert_gate_proj_weights.shape[0]\n    K = selected_experts.shape[1]\n    dev = hidden_states.device\n    dt = hidden_states.dtype\n\n    # ---- routed experts via sorted dispatch ----\n    flat_e = selected_experts.reshape(-1)\n    flat_tok = torch.arange(M, device=dev).repeat_interleave(K)\n    flat_w = routing_weights.reshape(-1)\n\n    sort_idx = torch.argsort(flat_e)\n    s_e = flat_e[sort_idx]\n    s_tok = flat_tok[sort_idx]\n    s_w = flat_w[sort_idx]\n\n    counts = torch.bincount(s_e, minlength=E)\n    offsets = torch.cat([torch.zeros(1, dtype=torch.long, device=dev), counts.cumsum(0)])\n    counts_cpu = counts.tolist()\n    offsets_cpu = offsets.tolist()\n\n    x_sorted = hidden_states.index_select(0, s_tok)\n    expert_out = torch.empty_like(x_sorted)\n\n    for e in range(E):\n        n = counts_cpu[e]\n        if n == 0:\n            continue\n        st = offsets_cpu[e]\n        ed = st + n\n        x = x_sorted[st:ed]\n        g = x @ expert_gate_proj_weights[e].t()\n        u = x @ expert_up_proj_weights[e].t()\n        inter = F.silu(g) * u\n        expert_out[st:ed] = inter @ expert_down_proj_weights[e].t()\n\n    weighted = expert_out * s_w.unsqueeze(-1).to(dt)\n    routed_out = torch.zeros(M, H, dtype=dt, device=dev)\n    routed_out.index_add_(0, s_tok, weighted)\n\n    # ---- shared expert ----\n    sg = hidden_states @ shared_expert_gate_proj_weight.t()\n    su = hidden_states @ shared_expert_up_proj_weight.t()\n    shared_inter = F.silu(sg) * su\n    shared_out = shared_inter @ shared_expert_down_proj_weight.t()\n    gate_logits = hidden_states @ shared_expert_gate_weight.t()\n    shared_gate = torch.sigmoid(gate_logits.float()).to(dt)\n    shared_out = shared_gate * shared_out\n\n    return routed_out + shared_out\n"
+    }
+  ]
+}

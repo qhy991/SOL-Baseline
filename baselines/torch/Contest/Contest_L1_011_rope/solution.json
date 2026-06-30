@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l1_011_rope",
+  "definition": "011_rotary_position_embedding",
+  "author": "torch",
+  "description": "Llama3-scaled RoPE cos/sin computation. Replaces reference's per-batch bmm with a broadcast outer-product (position[:,:,None] * inv_freq[None,None,:]) — the bmm is overkill for an outer product and memory-bound on small head_dim.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\n\n\n@torch.no_grad()\ndef run(position_ids, inv_freq, attention_scaling):\n    pos = position_ids.float()\n    freqs = pos.unsqueeze(-1) * inv_freq.float()  # (B, S, head_dim/2)\n    emb = torch.cat((freqs, freqs), dim=-1)        # (B, S, head_dim)\n    cos = emb.cos() * attention_scaling\n    sin = emb.sin() * attention_scaling\n    return torch.stack([cos, sin], dim=-1).to(torch.bfloat16)\n"
+    }
+  ]
+}

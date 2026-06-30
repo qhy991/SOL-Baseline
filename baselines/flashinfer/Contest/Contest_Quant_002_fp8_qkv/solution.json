@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_quant_002_fp8_qkv",
+  "definition": "002_fp8_attention_qkv_projection",
+  "author": "flashinfer",
+  "description": "FP8 blockwise (1x128 act / 128x128 weight) Q/K/V projection via flashinfer.gemm.gemm_fp8_nt_blockscaled + flashinfer rmsnorm for Q/K head norm. Weights and weight-scales are quantized once and cached on data_ptr identity, matching how a real serving stack reuses a quantized checkpoint.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.gemm as fg\nimport flashinfer.norm as fn\n\nE4M3_MAX = 448.0\n\n\ndef _quant_act_1x128(x_bf16):\n    M, K = x_bf16.shape\n    x_f32 = x_bf16.to(torch.float32).reshape(M, K // 128, 128)\n    amax = x_f32.abs().amax(dim=2)\n    scale = (amax / E4M3_MAX).clamp(min=1e-12)\n    qx = (x_f32 / scale.unsqueeze(-1)).clamp(-E4M3_MAX, E4M3_MAX)\n    qx = qx.reshape(M, K).to(torch.float8_e4m3fn)\n    return qx, scale.t().contiguous()\n\n\ndef _quant_weight_128x128(w_bf16):\n    N, K = w_bf16.shape\n    blocks = w_bf16.to(torch.float32).reshape(N // 128, 128, K // 128, 128)\n    amax = blocks.abs().amax(dim=(1, 3))\n    scale = (amax / E4M3_MAX).clamp(min=1e-12)\n    qw = (blocks / scale[:, None, :, None]).clamp(-E4M3_MAX, E4M3_MAX)\n    qw = qw.reshape(N, K).to(torch.float8_e4m3fn)\n    return qw, scale.t().contiguous()\n\n\ndef _fp8_linear(x_bf16, weight_bf16, bias_bf16):\n    qx, sx = _quant_act_1x128(x_bf16)\n    qw, sw = _quant_weight_128x128(weight_bf16)\n    out = fg.gemm_fp8_nt_groupwise(\n        qx, qw, sx, sw,\n        scale_granularity_mnk=(1, 128, 128),\n        scale_major_mode='MN',\n        out_dtype=torch.bfloat16,\n    )\n    if bias_bf16 is not None and bias_bf16.numel():\n        out = out + bias_bf16\n    return out\n\n\n@torch.no_grad()\ndef run(hidden_states, q_weight, k_weight, v_weight,\n        q_bias, k_bias, v_bias, q_norm_weight, k_norm_weight, rms_norm_eps):\n    NQ = 60; NKV = 8; HD = 128\n    b, s, h = hidden_states.shape\n    x_flat = hidden_states.reshape(-1, h).contiguous()\n\n    q = _fp8_linear(x_flat, q_weight, q_bias)\n    k = _fp8_linear(x_flat, k_weight, k_bias)\n    v = _fp8_linear(x_flat, v_weight, v_bias)\n\n    q_normed = fn.rmsnorm(q.reshape(-1, HD).contiguous(), q_norm_weight, rms_norm_eps)\n    q = q_normed.reshape(b, s, NQ, HD).permute(0, 2, 1, 3).contiguous()\n\n    k_normed = fn.rmsnorm(k.reshape(-1, HD).contiguous(), k_norm_weight, rms_norm_eps)\n    k = k_normed.reshape(b, s, NKV, HD).permute(0, 2, 1, 3).contiguous()\n\n    v = v.reshape(b, s, NKV, HD).permute(0, 2, 1, 3).contiguous()\n    return q, k, v\n"
+    }
+  ]
+}

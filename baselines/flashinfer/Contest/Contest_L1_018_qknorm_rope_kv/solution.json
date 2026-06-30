@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_l1_018_qknorm_rope_kvcache",
+  "definition": "018_fused_rope_with_qk_norm_and_kv_cache_update",
+  "author": "flashinfer",
+  "description": "Qwen3-Coder fused Q/K RMSNorm + RoPE + KV cache update: FlashInfer rmsnorm per-head, manual rotate_half RoPE, in-place KV cache index assignment.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.norm as fn\n\n\ndef _rotate_half(x):\n    half = x.shape[-1] // 2\n    return torch.cat((-x[..., half:], x[..., :half]), dim=-1)\n\n\n@torch.no_grad()\ndef run(query, key, value, position_ids, key_cache, value_cache,\n        cache_position, q_norm_weight, k_norm_weight, inv_freq, rms_norm_eps):\n    b, nq, s, d = query.shape\n    nkv = key.shape[1]\n\n    q_normed = fn.rmsnorm(query.reshape(-1, d).contiguous(), q_norm_weight, rms_norm_eps).view(b, nq, s, d)\n    k_normed = fn.rmsnorm(key.reshape(-1, d).contiguous(), k_norm_weight, rms_norm_eps).view(b, nkv, s, d)\n\n    inv_e = inv_freq[None, None, :].expand(b, s, -1)\n    pos = position_ids[:, :, None].float()\n    freqs = pos * inv_e\n    emb = torch.cat([freqs, freqs], dim=-1)\n    cos = emb.cos().to(query.dtype).unsqueeze(1)\n    sin = emb.sin().to(query.dtype).unsqueeze(1)\n\n    q_rot = q_normed * cos + _rotate_half(q_normed) * sin\n    k_rot = k_normed * cos + _rotate_half(k_normed) * sin\n\n    key_cache[:, :, cache_position] = k_rot\n    value_cache[:, :, cache_position] = value\n\n    return q_rot, k_rot, key_cache, value_cache\n"
+    }
+  ]
+}

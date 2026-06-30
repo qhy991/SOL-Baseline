@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_l1_064_mla_kv_expand",
+  "definition": "064_latent_kv_expansion_with_split",
+  "author": "flashinfer",
+  "description": "DeepSeek-V3/Kimi-K2 KV expansion: FlashInfer rmsnorm on (B*S, 512) compressed KV, then bf16 kv_b projection and split into k_nope/value.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.norm as fn\n\nNUM_HEADS = 128\nQK_NOPE = 128\nV_HEAD = 128\n\n\n@torch.no_grad()\ndef run(compressed_kv, kv_a_layernorm_weight, kv_b_proj_weight, eps):\n    b, s, lora = compressed_kv.shape\n    flat = compressed_kv.reshape(-1, lora).contiguous()\n    normed = fn.rmsnorm(flat, kv_a_layernorm_weight, eps)\n    expanded = normed @ kv_b_proj_weight.t()\n    kv = expanded.view(b, s, NUM_HEADS, QK_NOPE + V_HEAD).transpose(1, 2)\n    k_nope = kv[..., :QK_NOPE].contiguous()\n    value_states = kv[..., QK_NOPE:].contiguous()\n    return k_nope, value_states\n"
+    }
+  ]
+}

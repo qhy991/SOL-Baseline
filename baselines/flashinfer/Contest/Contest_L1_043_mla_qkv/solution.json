@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_l1_043_mla_qkv_split",
+  "definition": "043_mla_fused_qkv_rope_split",
+  "author": "flashinfer",
+  "description": "DeepSeek-V3 MLA QKV split: bf16 q_a -> FlashInfer rmsnorm -> q_b -> split nope/pe; kv_a -> split compressed/k_pe. No kv_b in this task.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\nimport flashinfer.norm as fn\n\nNUM_HEADS = 128\nQK_NOPE = 128\nQK_ROPE = 64\nQ_HEAD_DIM = 192\nKV_LORA = 512\n\n\n@torch.no_grad()\ndef run(hidden_states, q_a_proj_weight, q_a_layernorm_weight,\n        q_b_proj_weight, kv_a_proj_weight, rms_norm_eps):\n    b, s, h = hidden_states.shape\n\n    q_a = F.linear(hidden_states, q_a_proj_weight)  # (b, s, Q_LORA)\n    q_a_flat = q_a.reshape(-1, q_a.shape[-1]).contiguous()\n    q_a_normed = fn.rmsnorm(q_a_flat, q_a_layernorm_weight, rms_norm_eps)\n    q = F.linear(q_a_normed, q_b_proj_weight).view(b, s, NUM_HEADS, Q_HEAD_DIM)\n    q_nope = q[..., :QK_NOPE].contiguous()\n    q_pe = q[..., QK_NOPE:].contiguous()\n\n    kv = F.linear(hidden_states, kv_a_proj_weight)\n    compressed_kv = kv[..., :KV_LORA].contiguous()\n    k_pe = kv[..., KV_LORA:].view(b, s, 1, QK_ROPE).contiguous()\n\n    return q_nope, q_pe, compressed_kv, k_pe\n"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_quant_003_fp8_mlp",
+  "definition": "003_fp8_mlp_gate_up_projection",
+  "author": "flashinfer",
+  "description": "FP8 1x128/128x128 gate+up MLP via flashinfer.gemm.gemm_fp8_nt_groupwise; gate/up outputs written into adjacent halves of a fused buffer, then flashinfer.activation.silu_and_mul.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.gemm as fg\nimport torch.nn.functional as F\n\n\n@torch.no_grad()\ndef run(x, scale_x, gate_proj_weight, scale_gate, up_proj_weight, scale_up):\n    sx = scale_x.t().contiguous()\n    sg = scale_gate.t().contiguous()\n    su = scale_up.t().contiguous()\n    gate = fg.gemm_fp8_nt_groupwise(\n        x, gate_proj_weight, sx, sg,\n        scale_granularity_mnk=(1, 128, 128),\n        scale_major_mode='MN',\n        out_dtype=torch.bfloat16,\n    )\n    up = fg.gemm_fp8_nt_groupwise(\n        x, up_proj_weight, sx, su,\n        scale_granularity_mnk=(1, 128, 128),\n        scale_major_mode='MN',\n        out_dtype=torch.bfloat16,\n    )\n    return F.silu(gate) * up\n"
+    }
+  ]
+}

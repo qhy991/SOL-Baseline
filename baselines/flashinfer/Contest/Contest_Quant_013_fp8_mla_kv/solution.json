@@ -1,0 +1,22 @@
+{
+  "name": "flashinfer_contest_quant_013_fp8_mla_kv_compression",
+  "definition": "013_fp8_mla_kv_compression_projection",
+  "author": "flashinfer",
+  "description": "FP8 MLA KV compression (kv_a -> RMSNorm on first 512 -> kv_b expansion) via flashinfer.gemm.gemm_fp8_nt_groupwise + flashinfer rmsnorm.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport flashinfer.gemm as fg\nimport flashinfer.norm as fn\n\nE4M3_MAX = 448.0\nKV_LORA_RANK = 512\nQK_ROPE = 64\nNUM_HEADS = 128\nQK_NOPE = 128\nV_HEAD = 128\n\n\ndef _q_act_1x128(x_bf16):\n    M, K = x_bf16.shape\n    x_f32 = x_bf16.to(torch.float32).reshape(M, K // 128, 128)\n    amax = x_f32.abs().amax(dim=2)\n    scale = (amax / E4M3_MAX).clamp(min=1e-12)\n    qx = (x_f32 / scale.unsqueeze(-1)).clamp(-E4M3_MAX, E4M3_MAX)\n    qx = qx.reshape(M, K).to(torch.float8_e4m3fn)\n    return qx, scale.t().contiguous()\n\n\ndef _q_w_128x128(w_bf16):\n    N, K = w_bf16.shape\n    blocks = w_bf16.to(torch.float32).reshape(N // 128, 128, K // 128, 128)\n    amax = blocks.abs().amax(dim=(1, 3))\n    scale = (amax / E4M3_MAX).clamp(min=1e-12)\n    qw = (blocks / scale[:, None, :, None]).clamp(-E4M3_MAX, E4M3_MAX)\n    qw = qw.reshape(N, K).to(torch.float8_e4m3fn)\n    return qw, scale.t().contiguous()\n\n\ndef _fp8_matmul(x_bf16, w_bf16):\n    qx, sx = _q_act_1x128(x_bf16)\n    qw, sw = _q_w_128x128(w_bf16)\n    return fg.gemm_fp8_nt_groupwise(\n        qx, qw, sx, sw,\n        scale_granularity_mnk=(1, 128, 128),\n        scale_major_mode='MN',\n        out_dtype=torch.bfloat16,\n    )\n\n\n@torch.no_grad()\ndef run(hidden_states, kv_a_proj_weight, kv_a_layernorm_weight, kv_b_proj_weight, rms_norm_eps):\n    b, s, h = hidden_states.shape\n    x = hidden_states.reshape(-1, h).contiguous()\n    a = _fp8_matmul(x, kv_a_proj_weight)               # (M, 640)\n    compressed = a[:, :KV_LORA_RANK].contiguous()       # (M, 512)\n    k_pe = a[:, KV_LORA_RANK:KV_LORA_RANK + QK_ROPE]   # (M, 64)\n    normed = fn.rmsnorm(compressed, kv_a_layernorm_weight, rms_norm_eps)\n    expanded = _fp8_matmul(normed, kv_b_proj_weight)    # (M, num_heads*(qk_nope+v_head))\n    kv_expanded = expanded.reshape(b, s, NUM_HEADS, QK_NOPE + V_HEAD)\n    k_pe = k_pe.reshape(b, s, 1, QK_ROPE)\n    return kv_expanded.contiguous(), k_pe.contiguous()\n"
+    }
+  ]
+}

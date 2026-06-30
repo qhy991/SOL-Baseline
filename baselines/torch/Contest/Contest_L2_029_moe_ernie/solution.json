@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l2_029_moe_ernie",
+  "definition": "029_moe_sparse_routing_and_dispatch",
+  "author": "torch",
+  "description": "ERNIE-4.5 MoE (E=64, top-8): fp32 softmax routing with correction bias, clamp-normalized weights, shared expert path. Returns (output, router_logits).",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\nTOP_K = 8\nN_EXPERTS = 64\n\n\n@torch.no_grad()\ndef run(hidden_states, gate_weight, e_score_correction_bias,\n        expert_gate_proj, expert_up_proj, expert_down_proj,\n        shared_gate_proj, shared_up_proj, shared_down_proj, norm_min):\n    b, s, H = hidden_states.shape\n    x = hidden_states.view(-1, H)\n    M = x.shape[0]\n    dt = hidden_states.dtype\n    dev = x.device\n\n    # Shared expert\n    sg = F.silu(x @ shared_gate_proj.t())\n    su = x @ shared_up_proj.t()\n    shared_out = (sg * su) @ shared_down_proj.t()\n\n    # Routing\n    router_logits = x.float() @ gate_weight.t()\n    probs = F.softmax(router_logits, dim=1, dtype=torch.float32) + e_score_correction_bias\n    _, sel = torch.topk(probs, TOP_K, dim=-1)\n    rw = torch.gather(probs, -1, sel)\n    rw = rw / torch.clamp(rw.sum(dim=-1, keepdim=True), min=norm_min)\n    rw = rw.to(dt)\n\n    flat_e = sel.reshape(-1)\n    flat_tok = torch.arange(M, device=dev).repeat_interleave(TOP_K)\n    flat_w = rw.reshape(-1)\n\n    sort_idx = torch.argsort(flat_e)\n    s_e = flat_e[sort_idx]\n    s_tok = flat_tok[sort_idx]\n    s_w = flat_w[sort_idx]\n\n    counts = torch.bincount(s_e, minlength=N_EXPERTS)\n    offsets = torch.cat([torch.zeros(1, dtype=torch.long, device=dev), counts.cumsum(0)])\n    counts_cpu = counts.tolist()\n    offsets_cpu = offsets.tolist()\n\n    x_sorted = x.index_select(0, s_tok)\n    expert_out = torch.empty_like(x_sorted)\n\n    for e in range(N_EXPERTS):\n        n = counts_cpu[e]\n        if n == 0:\n            continue\n        st = offsets_cpu[e]\n        ed = st + n\n        xe = x_sorted[st:ed]\n        g = F.silu(xe @ expert_gate_proj[e].t())\n        u = xe @ expert_up_proj[e].t()\n        inter = g * u\n        expert_out[st:ed] = inter @ expert_down_proj[e].t()\n\n    weighted = (expert_out * s_w.unsqueeze(-1)).to(dt)\n    routed = torch.zeros(M, H, dtype=dt, device=dev)\n    routed.index_add_(0, s_tok, weighted)\n\n    output = (routed + shared_out).view(b, s, H)\n    return output, router_logits\n"
+    }
+  ]
+}
