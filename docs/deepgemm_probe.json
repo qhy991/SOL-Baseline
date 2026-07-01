@@ -1,0 +1,17 @@
+{
+  "bf16_gemm_nt": "ok",
+  "bf16_max_abs_diff": 1.0,
+  "cuda_available": true,
+  "device_capability": [
+    10,
+    0
+  ],
+  "device_name": "NVIDIA B200",
+  "fp16_inputs_to_bf16_gemm_nt": "rejected",
+  "fp16_rejection": "RuntimeError: Assertion error (csrc/apis/gemm.hpp:384): a.scalar_type() == torch::kBFloat16",
+  "imported": true,
+  "module_file": "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages/deep_gemm/__init__.py",
+  "returncode": 0,
+  "stderr": "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.\n  import pynvml  # type: ignore[import]",
+  "version": "2.5.0"
+}

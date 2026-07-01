@@ -13,8 +13,25 @@ Baselines for the Contest evaluation set under `data/benchmark/Contest/`. Target
 - **PyTorch**: 2.9.0+cu130
 - **FlashInfer**: 0.6.12
 - **flash_attn**: 2.8.3
+- **DeepGEMM**: 2.5.0 installed after review and BF16-smoke-tested; no Contest baseline shipped from it yet
 
-Not in env (would expand coverage): DeepGEMM, FlashMLA, TransformerEngine, sgl-kernel, vLLM, FlashAttention 3.
+Not in env (would expand coverage): FlashMLA, TransformerEngine, sgl-kernel, vLLM, FlashAttention 3, MegaBlocks, xFormers, NATTEN, flash-linear-attention.
+
+Audit the current library state:
+
+```bash
+cd sol-baseline
+scripts/audit_sota_libraries.py \
+    --python ../sol-execbench/.venv/bin/python \
+    --extra-path sgl_kernel=../sglang \
+    --output docs/SOTA_COVERAGE_AUDIT.md \
+    --json-output docs/sota_coverage_audit.json
+
+CUDA_HOME=/usr/local/cuda-13.0 PATH=/usr/local/cuda-13.0/bin:$PATH \
+    scripts/probe_deepgemm.py \
+    --python ../sol-execbench/.venv/bin/python \
+    --output docs/deepgemm_probe.json
+```
 
 ## How to run
 
@@ -107,3 +124,5 @@ See [`library_index.json`](library_index.json) — dtype × shape × SM constrai
 - `scripts/aggregate_contest.py` — discovers all baselines, runs each with appropriate config, writes Markdown
 - `scripts/run_contest.sh` — bash alternative covering specific tasks (legacy)
 - `scripts/verify.py` / `scripts/benchmark.py` — original sol-baseline tools extended for `Contest/` category
+- `scripts/audit_sota_libraries.py` — importability audit for untested community SOTA candidates
+- `scripts/probe_deepgemm.py` — small GPU smoke test for DeepGEMM availability and dtype constraints

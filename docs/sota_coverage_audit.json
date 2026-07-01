@@ -1,0 +1,426 @@
+[
+  {
+    "blocking_notes": "Requires compiled deep_gemm._C extension. On SM100, FP8 scale layout may need packed UE8M0 conversion, so importability is necessary but not sufficient.",
+    "category": "FP8/BF16 GEMM and MoE",
+    "contest_targets": [
+      "FIB/005 fp16 GEMM router shape",
+      "FIB/020 FP8 routed MoE",
+      "L2/012 padded MoE grouped GEMM",
+      "L2/048 fp32 MoE dispatch if precision can be preserved",
+      "Quant/011 FP8 router projection"
+    ],
+    "detail": "deep_gemm (2.5.0) @ /home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages/deep_gemm/__init__.py",
+    "display": "DeepGEMM",
+    "expected_value": "Best direct missing candidate for GEMM/MoE negatives.",
+    "key": "deep_gemm",
+    "modules": [
+      "deep_gemm"
+    ],
+    "priority": "P0",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": true,
+          "imported": true,
+          "module": "deep_gemm",
+          "origin": "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages/deep_gemm/__init__.py",
+          "version": "2.5.0"
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload",
+        "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages"
+      ]
+    },
+    "source_path": null,
+    "status": "available",
+    "summary": "import succeeded"
+  },
+  {
+    "blocking_notes": "Full PyTorch extension is required; the meta package alone is not enough.",
+    "category": "FP8 layers",
+    "contest_targets": [
+      "Quant FP8 projection tasks with non-FlashInfer recipes",
+      "L2/019 fp32 decoder if an FP8 path is acceptable under tolerance",
+      "L2/048 fp32 MoE dispatch if precision can be preserved"
+    ],
+    "detail": "transformer_engine.pytorch: ModuleNotFoundError: No module named 'transformer_engine'",
+    "display": "TransformerEngine",
+    "expected_value": "Main NVIDIA library for FP8 Linear/LayerNorm/MLP experiments.",
+    "key": "transformer_engine",
+    "modules": [
+      "transformer_engine",
+      "transformer_engine.pytorch"
+    ],
+    "priority": "P0",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "transformer_engine",
+          "origin": null
+        },
+        {
+          "error": "ModuleNotFoundError: No module named 'transformer_engine'",
+          "found": false,
+          "imported": false,
+          "module": "transformer_engine.pytorch",
+          "origin": null
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload",
+        "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages"
+      ]
+    },
+    "source_path": null,
+    "status": "missing",
+    "summary": "not installed"
+  },
+  {
+    "blocking_notes": "FA2 imports are not enough; fp32 support must be verified by an actual kernel call.",
+    "category": "Attention",
+    "contest_targets": [
+      "L1/067 fp32 ultralong GQA attention"
+    ],
+    "detail": "no candidate module found on sys.path",
+    "display": "FlashAttention 3 / Hopper-Blackwell attention path",
+    "expected_value": "Only credible near-term path for re-testing fp32 ultralong attention.",
+    "key": "flash_attn3",
+    "modules": [
+      "flash_attn_interface",
+      "flash_attn"
+    ],
+    "priority": "P0",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "flash_attn_interface",
+          "origin": null
+        },
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "flash_attn",
+          "origin": null
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload",
+        "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages"
+      ]
+    },
+    "source_path": null,
+    "status": "missing",
+    "summary": "not installed"
+  },
+  {
+    "blocking_notes": "APIs are less stable than FlashInfer; wrappers need per-op compatibility checks.",
+    "category": "Serving custom ops",
+    "contest_targets": [
+      "L1/018 fused RoPE + QK norm + KV update",
+      "L1/023 multimodal RoPE position work",
+      "FIB/020 alternative FP8 MoE paths"
+    ],
+    "detail": "sglang.srt._custom_ops: ModuleNotFoundError: No module named 'sglang'",
+    "display": "sgl-kernel / SGLang custom ops",
+    "expected_value": "Useful for fused serving ops that FlashInfer 0.6.12 cannot cover on SM100.",
+    "key": "sgl_kernel",
+    "modules": [
+      "sgl_kernel",
+      "sglang.srt._custom_ops"
+    ],
+    "priority": "P1",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "sgl_kernel",
+          "origin": null
+        },
+        {
+          "error": "ModuleNotFoundError: No module named 'sglang'",
+          "found": false,
+          "imported": false,
+          "module": "sglang.srt._custom_ops",
+          "origin": null
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/home/qinhaiyan/sglang",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload"
+      ]
+    },
+    "source_path": "/home/qinhaiyan/sglang",
+    "status": "missing",
+    "summary": "not installed"
+  },
+  {
+    "blocking_notes": "Large dependency surface; importability often depends on exact torch/CUDA build.",
+    "category": "Serving attention and MoE",
+    "contest_targets": [
+      "L1/067 fp32 or long-context attention re-test",
+      "L1/071 KV cache update + RoPE",
+      "FIB attention wrappers as alternate implementation"
+    ],
+    "detail": "vllm._C: ModuleNotFoundError: No module named 'vllm'",
+    "display": "vLLM custom ops / vllm-flash-attn",
+    "expected_value": "Independent serving stack for paged attention and custom CUDA ops.",
+    "key": "vllm",
+    "modules": [
+      "vllm",
+      "vllm._C"
+    ],
+    "priority": "P1",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "vllm",
+          "origin": null
+        },
+        {
+          "error": "ModuleNotFoundError: No module named 'vllm'",
+          "found": false,
+          "imported": false,
+          "module": "vllm._C",
+          "origin": null
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload",
+        "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages"
+      ]
+    },
+    "source_path": null,
+    "status": "missing",
+    "summary": "not installed"
+  },
+  {
+    "blocking_notes": "Most useful when token routing layout matches dropless/block-sparse assumptions.",
+    "category": "MoE",
+    "contest_targets": [
+      "L1/044 MoE expert compute",
+      "L1/076 dense batched expert forward",
+      "L2/008/L2/010/L2/012/L2/013/L2/029 MoE variants"
+    ],
+    "detail": "no candidate module found on sys.path",
+    "display": "MegaBlocks / grouped_gemm",
+    "expected_value": "Potential grouped-GEMM alternative to per-expert torch.mm loops.",
+    "key": "megablocks",
+    "modules": [
+      "megablocks",
+      "grouped_gemm"
+    ],
+    "priority": "P1",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "megablocks",
+          "origin": null
+        },
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "grouped_gemm",
+          "origin": null
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload",
+        "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages"
+      ]
+    },
+    "source_path": null,
+    "status": "missing",
+    "summary": "not installed"
+  },
+  {
+    "blocking_notes": "Do not count as Contest coverage until a matching Contest task exists.",
+    "category": "Linear attention / SSM",
+    "contest_targets": [
+      "Not part of the 60-task Contest set; relevant to wider sol-execbench coverage."
+    ],
+    "detail": "no candidate module found on sys.path",
+    "display": "flash-linear-attention",
+    "expected_value": "Important for non-Contest Mamba2/RWKV/linear-attention tasks.",
+    "key": "fla",
+    "modules": [
+      "fla"
+    ],
+    "priority": "P2",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "fla",
+          "origin": null
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload",
+        "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages"
+      ]
+    },
+    "source_path": null,
+    "status": "missing",
+    "summary": "not installed"
+  },
+  {
+    "blocking_notes": "Neighborhood attention is not a drop-in replacement for arbitrary cu_seqlens attention.",
+    "category": "Vision attention",
+    "contest_targets": [
+      "Potential L1/L2 vision attention variants outside current shipped Contest gaps."
+    ],
+    "detail": "no candidate module found on sys.path",
+    "display": "NATTEN",
+    "expected_value": "Worth tracking for wider vision attention coverage.",
+    "key": "natten",
+    "modules": [
+      "natten"
+    ],
+    "priority": "P2",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "natten",
+          "origin": null
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload",
+        "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages"
+      ]
+    },
+    "source_path": null,
+    "status": "missing",
+    "summary": "not installed"
+  },
+  {
+    "blocking_notes": "Often behind PyTorch SDPA/FlashAttention on modern NVIDIA inference shapes.",
+    "category": "Attention and fused activations",
+    "contest_targets": [
+      "L1/046 softcap/softmax sanity check",
+      "L1/021 varlen attention sanity check"
+    ],
+    "detail": "no candidate module found on sys.path",
+    "display": "xFormers",
+    "expected_value": "Useful as an independent comparison for attention/activation negatives.",
+    "key": "xformers",
+    "modules": [
+      "xformers"
+    ],
+    "priority": "P2",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "xformers",
+          "origin": null
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload",
+        "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages"
+      ]
+    },
+    "source_path": null,
+    "status": "missing",
+    "summary": "not installed"
+  },
+  {
+    "blocking_notes": "Generally ROCm-focused; low expected value for NVIDIA B200 Contest runs.",
+    "category": "ROCm-oriented kernels",
+    "contest_targets": [
+      "None for B200 CUDA environment unless a CUDA backend is present."
+    ],
+    "detail": "no candidate module found on sys.path",
+    "display": "AITER",
+    "expected_value": "Track explicitly so CUDA/B200 reviewers do not assume it was forgotten.",
+    "key": "aiter",
+    "modules": [
+      "aiter"
+    ],
+    "priority": "P3",
+    "probe": {
+      "modules": [
+        {
+          "error": null,
+          "found": false,
+          "imported": false,
+          "module": "aiter",
+          "origin": null
+        }
+      ],
+      "python": "/home/qinhaiyan/sol-execbench/.venv/bin/python",
+      "sys_path_head": [
+        "",
+        "/usr/lib/python312.zip",
+        "/usr/lib/python3.12",
+        "/usr/lib/python3.12/lib-dynload",
+        "/home/qinhaiyan/sol-execbench/.venv/lib/python3.12/site-packages"
+      ]
+    },
+    "source_path": null,
+    "status": "missing",
+    "summary": "not installed"
+  }
+]

@@ -2,12 +2,14 @@
 
 **Author:** sol-baseline maintainer
 **Date:** 2026-07-01
-**Repository:** `qhy991/SOL-Baseline`, branch `main`, HEAD `d49f31d`
-**Environment (baseline of record):** NVIDIA B200 (SM 100, Blackwell), CUDA 13.0, PyTorch 2.9.0+cu130, Triton 3.5.0, FlashInfer 0.6.12, flash_attn 2.8.3
+**Repository:** `qhy991/SOL-Baseline`, branch `main`, HEAD `5decaaa`
+**Environment (baseline of record):** NVIDIA B200 (SM 100, Blackwell), CUDA 13.0, PyTorch 2.9.0+cu130, Triton 3.5.0, FlashInfer 0.6.12. DeepGEMM 2.5.0 was installed after review for import/smoke probing, but no DeepGEMM Contest baseline is shipped yet. See §7 for an import audit of every SOTA library considered.
+
+> **Scope disclaimer (read first).** The 44 shipped baselines only prove that, within a narrow subset of the community SOTA library ecosystem (primarily FlashInfer 0.6.12 + PyTorch native SDPA/rms_norm + a small amount of FlashAttention 2 at development time), no faster implementation was found for those tasks. This document does **not** claim to have searched all available SOTA implementations. DeepGEMM is now installed and smoke-tested, but its Contest wrappers have not yet been benchmarked; several other plausibly-relevant libraries (TransformerEngine, FlashAttention 3, SGL-Kernel, vLLM custom ops, MegaBlocks, NATTEN, flash-linear-attention, cuDNN Frontend) were **not built or tested** in this environment. See §7 for the audit, §9 for what re-running with more libraries would plausibly change.
 
 ---
 
-## 1. Scope and completeness claim
+## 1. Scope of this work
 
 The Contest task set at `data/benchmark/Contest/` contains **60 problems** across four categories:
 
@@ -21,10 +23,10 @@ The Contest task set at `data/benchmark/Contest/` contains **60 problems** acros
 Of these 60 problems:
 
 - **44 baselines shipped** and validated on B200 (73%)
-- **15 negative results documented** in `docs/CONTEST_NEGATIVE_RESULTS.md` — SOTA library either matches reference within measurement noise (~1.0x), loses to it, or is unavailable/broken on this env
+- **15 tasks documented as "no faster implementation found in the tested environment"** in `docs/CONTEST_NEGATIVE_RESULTS.md` — the SOTA path tested either matches reference within measurement noise (~1.0x), loses to it, or is unavailable/broken on this env
 - **1 task deferred** (L2/006 — see §5.3)
 
-**Total accounted-for coverage: 60/60 (100%).** No task is unlisted; every task is either shipped, negative-documented, or explicitly deferred with a reason.
+**Every task has a written disposition (44 shipped + 15 tested-negative + 1 deferred = 60).** This is *bookkeeping completeness*, not *search completeness*: it says "no task is silently unaccounted for," it does NOT say "all community SOTA implementations have been exhausted." Multiple relevant libraries were not built or tested in this environment (§7).
 
 ---
 
@@ -212,9 +214,9 @@ Where the L2 negatives are: L2/002 (fp32 decoder), L2/004 (bandwidth-bound MLP),
 
 Total: **16.** Every task has a documented reason.
 
-### 5.1 Reference is genuinely SOTA on this hardware — 13 tasks
+### 5.1 Best tested implementation matches reference — 13 tasks
 
-These have measured speedup ≤ 1.02x with the best SOTA approach I could construct. Removing them from the shipped set is per the sol-baseline upstream policy: **only ship baselines that beat the reference on average**.
+For each of these, the fastest implementation I could construct using the **available** libraries (§7) is at or below 1.02x vs the reference. Removing them from the shipped set is per the sol-baseline upstream policy: **only ship baselines that beat the reference on average**. This is not a claim that no library on Earth can beat these references — see §5.4 for which of these are the most promising re-attempt candidates once more libraries are installed.
 
 | Task | Best measured | Root cause |
 |---|---|---|
@@ -232,10 +234,24 @@ These have measured speedup ≤ 1.02x with the best SOTA approach I could constr
 | L2/048 fp32 MoE batched dispatch | 0.96x | Tolerance `max_atol=2.6e-4` forces fp32 accumulation everywhere; reference already does this |
 | FIB/005 fp16 GEMM (DeepSeek router) | 0.78x | cuBLAS fp16 GEMM for M∈[1,14104]×N=256×K=7168 is optimal; routergemm adds bf16 cast overhead |
 
-**Reviewer question to consider:** *Are any of these "reference is SOTA" claims actually artifacts of missing libraries?* Table §7 lists what's missing. In particular:
-- FIB/005, L2/012, L2/019 might be improvable with DeepGEMM or TransformerEngine (fp8 path on fp32/fp16 inputs), which are not installed.
-- L1/067 might be improvable with FA3 (SM90 native fp32 support), which is also not installed.
-- **I did not test the DeepGEMM/TE/FA3 paths.** These are honest "reference is SOTA in the *available* environment" results, not "reference is SOTA in general."
+**Which of these might reverse if we install more libraries?** Concretely, per task:
+
+| Task | Untried candidate | Rationale |
+|---|---|---|
+| FIB/005 fp16 router GEMM | **DeepGEMM** grouped GEMM, or **TransformerEngine** cuBLAS+cast fused path | DeepGEMM has specialized kernels for skewed M×N shapes; TE avoids the routergemm's bf16-cast penalty |
+| L1/067 fp32 ultralong attention | **FlashAttention 3** (has SM90+ fp32 path), **vllm-flash-attn** | FA2 is bf16-only; FA3 supports fp32 on SM90/100 |
+| L2/002, L2/019 fp32 decoders | **TransformerEngine** fp32→fp8 mixed-precision path | Would reduce the fp32 GEMM cost even if the reference chain looks optimal |
+| L2/012 MoE capacity-factor | **MegaBlocks**, **DeepEP** | Both provide permuted grouped GEMM with better padding-avoidance than torch `bmm` |
+| L2/048 fp32 MoE dispatch | **MegaBlocks** fp32 path | Same reason as L2/012 |
+| L1/046 softcap+softmax | **flash_attn.softmax** kernels | FA has fused softcap+softmax variants |
+| L1/059 MoE group score | **vLLM** `fused_grouped_topk` | Single fused kernel for topk-sum-topk-mask chain |
+| L1/063 attn output reshape+proj | **cuBLAS Lt heuristics** direct, **TransformerEngine** | Might select a different algo than default cuBLAS |
+| L1/071 KV cache update+RoPE | **SGL-Kernel** `apply_rope_and_cache` | Would fuse the RoPE + cat into one kernel |
+| L1/076 batched expert forward | **MegaBlocks** dense-token MoE | Handles the "no-routing" case as a specialized dense grouped GEMM |
+| L1/003 lm_head projection | **cutlass split-K GEMM** | Might beat default cuBLAS for the K=2048, N=102400 rectangular shape |
+| L2/004 fused residual+RMSNorm+MLP | **TransformerEngine** `LayerNormMLP` | Fuses norm + MLP in one launch |
+
+**None of these have been tested in this environment.** §7 explains why. The 13 "1.00x" numbers are honest measurements against the *fastest implementation I built with the tested libraries*, not against a globally-optimal implementation.
 
 ### 5.2 Library bugs / API unavailability — 2 tasks
 
@@ -291,8 +307,12 @@ These are things I stepped in during development. They are permanent gotchas for
 - **`docs/CONTEST.md`** — Human-facing playbook: env, patterns, how to run.
 - **`docs/CONTEST_RESULTS.md`** — Auto-generated speedup table (44 baselines).
 - **`docs/CONTEST_NEGATIVE_RESULTS.md`** — All 13 documented negatives + failed 0.6.13 upgrade + L2/006 deferred rationale.
+- **`docs/SOTA_COVERAGE_AUDIT.md`** — Generated importability audit for untested community SOTA libraries.
+- **`docs/deepgemm_probe.json`** — GPU smoke result for DeepGEMM on B200.
 - **`docs/library_index.json`** — Kernel × dtype × SM compatibility matrix with anti-patterns + FlashInfer 0.6.13 recovery recipe.
 - **`scripts/aggregate_contest.py`** — Single-command regeneration of CONTEST_RESULTS.md.
+- **`scripts/audit_sota_libraries.py`** — Reproducible library import audit for DeepGEMM, TE, FA3, SGL/vLLM, MegaBlocks, xFormers, NATTEN, FLA, and AITER.
+- **`scripts/probe_deepgemm.py`** — Small BF16/fp16 DeepGEMM smoke test; does not benchmark Contest workloads.
 - **`scripts/bench_config.json`** and **`scripts/bench_config_fast.json`** — Two benchmark configurations wired into the aggregator (25w/100iter + `benchmark_reference=True` for `full`; 5w/10iter + `benchmark_reference=False` for `fast`).
 - **`scripts/bench_config_quick.json`** — Intermediate configuration (5w/20iter, `benchmark_reference=True`) staged in the repo but **not** wired into the aggregator. Available for one-shot re-runs if a reviewer wants reference-timed numbers on a task that the aggregator currently runs in `fast` mode. See §8.1.
 - **`scripts/verify.py`** — Extended for `Contest/{lib}/Contest/{task}` 3-level path.
@@ -300,24 +320,61 @@ These are things I stepped in during development. They are permanent gotchas for
 
 ---
 
-## 7. Environment gaps that shape the ceiling
+## 7. Environment audit — what's actually importable right now
 
-The upper bound on Contest coverage in this environment is set by which SOTA libraries are installed. Here's the delta.
+**This section is the ground truth against which every "reference is SOTA" claim in §5 should be judged.** I re-verified library availability by attempting `import` in the same Python environment the aggregator runs in (`~/sol-execbench/.venv`), on 2026-07-01 at HEAD `5decaaa`. Regenerate the audit with:
 
-| Library | Status | If installed, would potentially improve |
-|---|---|---|
-| **FlashInfer 0.6.12** | ✓ available | (current SOTA source — 26/44 baselines) |
-| **flash_attn 2.8.3** | ✓ available | (used in L1/092, L2/009) |
-| **Liger 0.8** | ✓ available (not used) | Liger 0.8 has PyTorch 2.9 `torch.distributed.tensor` compat issue on `LigerRMSNorm` and `LigerSiLUMulFunction`; FlashInfer supersedes both anyway |
-| **causal_conv1d 1.6.2** | ✓ available (not used) | Would fit conv1d tasks; none in Contest |
-| **DeepGEMM** | ✗ not installed | Might improve FIB/005 fp16 GEMM, Quant/011 fp8 routing |
-| **TransformerEngine** | ✗ not installed | RowWise / TensorWise fp8 scaling for Quant tasks with non-DeepSeek recipes; L2/019 fp32 → fp8 path |
-| **FlashMLA** | ✗ SM90-only (not built for SM100) | Would supersede our MLA implementations if usable |
-| **FlashAttention 3** | ✗ not installed | Fp32 ultralong attention (L1/067) is the main candidate |
-| **sgl-kernel** | ✗ not installed | Fused RoPE + norm variants that might improve L1/018, L1/023 |
-| **vLLM custom_ops** | ✗ not installed | Alternative routes for MoE fusion |
+```bash
+cd ~/sol-baseline
+scripts/audit_sota_libraries.py \
+  --python ~/sol-execbench/.venv/bin/python \
+  --extra-path sgl_kernel=~/sglang \
+  --output docs/SOTA_COVERAGE_AUDIT.md \
+  --json-output docs/sota_coverage_audit.json
+```
 
-### 7.1 Failed upgrade attempt (recorded in negatives)
+### 7.1 What is actually importable in the tested environment
+
+| Library | Version | Status | Contest baselines that use it |
+|---|---|---|---|
+| PyTorch | 2.9.0+cu130 | ✓ importable | All 44 (via `F.linear`, `F.silu`, `F.rms_norm`, `F.scaled_dot_product_attention`) |
+| Triton | 3.5.0 | ✓ importable | Underlies torch codegen; no direct use |
+| FlashInfer | 0.6.12 | ✓ importable | 26 baselines (rmsnorm, layernorm, silu_and_mul, gelu_tanh_and_mul, gemm_fp8_nt_groupwise, mla wrapper, batch-decode/prefill wrappers) |
+| DeepGEMM | 2.5.0 | ✓ importable; BF16 GEMM smoke-tested | No shipped baseline yet; candidate for FIB/020, L2/012, Quant/011 re-attempts |
+| cutlass-dsl | 4.4.1 | ✓ (transitive) | Underlies FlashInfer's Blackwell kernels |
+
+DeepGEMM smoke command:
+
+```bash
+CUDA_HOME=/usr/local/cuda-13.0 PATH=/usr/local/cuda-13.0/bin:$PATH \
+  scripts/probe_deepgemm.py \
+  --python ~/sol-execbench/.venv/bin/python \
+  --output docs/deepgemm_probe.json
+```
+
+Current result: `bf16_gemm_nt` launches on B200; `fp16` inputs to that API are rejected with `a.scalar_type() == torch::kBFloat16`, so FIB/005 cannot be directly replaced without a cast or a different DeepGEMM API.
+
+### 7.2 What is NOT importable — and what state the "not installed" is in
+
+The environment was destabilized by the failed FlashInfer 0.6.13 upgrade (§7.3) followed by an incomplete `uv sync` recovery. Several libraries that **were** available during Contest baseline development are now missing from the venv. This is an audit issue: the shipped `solution.json` files for L1/092 and L2/009 depend on `flash_attn`, so re-running the aggregator would fail on those tasks until `flash_attn` is reinstalled.
+
+| Library | State on disk | State in venv | Why "not tested" is honest |
+|---|---|---|---|
+| **flash_attn** | pip-installable | ✗ MISSING (needs `pip install flash-attn==2.8.3 --no-build-isolation`) | Was 2.8.3 during dev. L1/092 (2.65x) + L2/009 (2.04x manual) baselines shipped assume this; re-running the aggregator today will error on those two |
+| **TransformerEngine** | not installed | ✗ MISSING | Would require `pip install transformer_engine[pytorch]` plus a matching CUDA build |
+| **FlashAttention 3** | not installed | ✗ MISSING | No stable PyPI release for SM100 as of 2026-07; would need source build |
+| **FlashMLA** | not installed | ✗ MISSING | Sources exist upstream but SM90-only; not applicable to B200 |
+| **SGL-Kernel** | not installed | ✗ MISSING | Contains `apply_rope_and_cache`, `silu_and_mul` variants, `topk_from_logits` — plausibly beats several small L1 baselines |
+| **vLLM** custom_ops | not installed | ✗ MISSING | Has fused MoE + attention wrappers |
+| **MegaBlocks** | not installed | ✗ MISSING | Permuted grouped GEMM MoE; alternative to sort+per-expert for L2/012, L2/048 |
+| **xformers** | not installed | ✗ MISSING | Alternative attention kernels |
+| **NATTEN** | not installed | ✗ MISSING | Neighborhood attention; niche fit for vision tasks |
+| **flash-linear-attention (fla)** | installed (0.5.1) | ✗ MISSING (removed by `uv sync`) | Linear attention variants; niche |
+| **cuDNN Frontend** | shipped with torch | (used indirectly via SDPA cuDNN backend) | Direct Python bindings not exercised |
+| **Liger 0.8** | not installed | ✗ MISSING (was available during dev) | Had PyTorch 2.9 `distributed.tensor` compat issue anyway; FlashInfer supersedes |
+| **causal_conv1d 1.6.2** | not installed | ✗ MISSING (was available during dev) | No conv1d tasks in Contest |
+
+### 7.3 Failed upgrade attempt to FlashInfer 0.6.13
 
 I attempted to upgrade FlashInfer 0.6.12 → 0.6.13 (latest stable, 24 Jun 2026) specifically to unblock the two hanging MoE paths (`cutlass_fused_moe` bf16, `trtllm_fp8_block_scale_moe`). **The upgrade broke the environment on import**:
 
@@ -327,9 +384,27 @@ File ".../flashinfer/gemm/kernels/grouped_gemm_masked_blackwell.py":
 AttributeError: module 'cutlass.cute.nvgpu' has no attribute 'OperandMajorMode'
 ```
 
-0.6.13's pyproject requires `nvidia-cutlass-dsl>=4.5.0`, but the Blackwell kernel code still uses the 4.4.x `OperandMajorMode` name that 4.5.x renamed. Downgrade also blocked by transitive dependency conflicts. Recovery required 4 sequential steps to restore the env; documented at `docs/library_index.json → flashinfer._recovery_recipe`.
+0.6.13's pyproject requires `nvidia-cutlass-dsl>=4.5.0`, but the Blackwell kernel code still uses the 4.4.x `OperandMajorMode` name that 4.5.x renamed. Downgrade also blocked by transitive dependency conflicts. Recovery required `uv sync --all-groups` + reinstall `flashinfer==0.6.12 --no-deps` + reinstall `nvidia-cusparselt-cu13` + `nvidia-nvshmem-cu13` + `pynvml`. **In the process, `flash_attn`, `causal_conv1d`, `liger_kernel`, and `fla` were removed from the venv and not reinstalled.** Details in `docs/CONTEST_NEGATIVE_RESULTS.md` and `docs/library_index.json → flashinfer._recovery_recipe`.
 
-**No newer FlashInfer version is currently usable on this env.** MoE remains covered by sort+per-expert `torch.mm`.
+**Consequence for the aggregator:** re-running `scripts/aggregate_contest.py` today will fail on L1/092 (`flash_attn`) and L2/009 (`flash_attn`) with `ModuleNotFoundError`. The `docs/CONTEST_RESULTS.md` numbers were captured **before** the upgrade destabilized the venv. To reproduce them, the reviewer must first restore `flash_attn`:
+
+```
+uv pip install flash-attn==2.8.3 --no-build-isolation
+```
+
+### 7.4 Priorities for next-round library work (recommendation)
+
+Not "random extension" — ranked by expected coverage/perf return per hour of build effort:
+
+1. **flash_attn 2.8.3** — critical bug-fix; restores L1/092 and L2/009 to the aggregator immediately. ~5 min if wheels available, ~30 min if source build.
+2. **DeepGEMM wrappers** — DeepGEMM is now installed and smoke-tested. Candidates: FIB/020 FP8 MoE, L2/012 grouped BF16 MoE, Quant/011 FP8 routing. FIB/005 is lower priority because the available BF16 GEMM API rejects fp16 inputs and would require cast overhead or a different API. ~2–4 hr implementation + testing.
+3. **TransformerEngine 2.16+** — biggest single library for FP8/mixed-precision. Candidates: L2/002 & L2/019 fp32 decoders, L2/004 fused MLP, possibly Quant/014 (with `NoOp` scaling recipe). ~30 min install + ~4 hr testing.
+4. **FlashAttention 3** — the one shot at improving L1/067 fp32 ultralong attention on B200. ~1 hr source build (no wheels for SM100 yet) + ~1 hr testing.
+5. **MegaBlocks / DeepEP** — MoE grouped GEMM path. Candidates: L2/012 (0.43x now), L2/048 (0.96x now), possibly L1/076. Nontrivial install; ~2 hr build + ~4 hr testing.
+6. **SGL-Kernel + vLLM custom ops** — a handful of small L1 wins (L1/046, L1/059, L1/071). ~1 hr install + ~2 hr testing.
+7. **cuDNN Frontend direct Python bindings** — worth trying if TE doesn't cover the fp32 decoder ceiling.
+
+Time-boxed estimate: with 1 GPU-day of build/test work and no build failures, expect **~5–8 additional baselines to move from negative to shipped**, and 1–2 currently-unattemptable tasks (Quant/014, FIB/020) to become approachable.
 
 ---
 
@@ -370,15 +445,23 @@ The sort+per-expert baseline for L1/044 shows ~2x on the eval driver's random wo
 
 ---
 
-## 9. What "the community SOTA has been searched to the limit" actually means here
+## 9. Scope of the SOTA search — honest limits
 
-The claim is scoped:
+The correct framing (owed to reviewer feedback) is not "all SOTA implementations were found." It is:
 
-**True on this hardware and library set:** For 44 tasks I have a working SOTA baseline that beats the reference; for 13 tasks the reference genuinely is SOTA in this environment; for 2 more, the specific library needed either doesn't exist yet in a working form (FIB/020 trtllm-fp8-moe hangs) or is fundamentally impossible (Quant/014 phase-flip); L2/006 is deferred.
+**What was tested.** Within the library set of §7.1 — FlashInfer 0.6.12 + PyTorch native (SDPA, `rms_norm`, `silu`) + FlashAttention 2 at development time — I built the fastest baseline I could for each of the 60 Contest tasks. 44 beat the reference; 13 did not; 2 were library-blocked; 1 was deferred. This is a *bounded* search over a *specific* environment.
 
-**Not true globally:** If DeepGEMM, FA3, TransformerEngine, or a fixed FlashInfer 0.6.14+ becomes available, roughly **6 of the 13 negatives** should be re-attempted, and 3 more baselines (Quant/014, FIB/020, L2/006) could realistically be added. Best-case additional coverage: **60/60 with mean speedup improving from 3.66x to ~4.5x**.
+**What was NOT tested.** DeepGEMM 2.5.0 is now importable and BF16 GEMM smoke-tested (post-review addition), but **no Contest wrapper has been written or benchmarked against it yet**. Not tested at all: TransformerEngine, FlashAttention 3, FlashMLA, SGL-Kernel, vLLM custom ops, MegaBlocks, DeepEP, xformers, NATTEN, flash-linear-attention, cuDNN Frontend Python bindings. None of these were installed in the tested environment. See §5.1's per-task "untried candidate" column, §7.4's ranked priority list, and `docs/SOTA_COVERAGE_AUDIT.md` for the reviewer-generated audit matrix.
 
-**Realistic near-term ceiling in this environment: 44/60 shipped with 3.66x geomean.** Beyond this requires either new library releases or hardware/dependency changes we don't control.
+**Concrete implication.** The claim "no faster SOTA exists" is only defensible for the 13 tasks in §5.1 to the extent that no untested library on §7.4's list would have won. I do not have that evidence. The honest formulation is:
+
+> "44 baselines shipped, all faster than reference. 13 tasks tested-negative under a subset of the community SOTA (§7.1) and are candidates for re-attempt once §7.4's libraries are built (§5.1 lists the specific candidate per task)."
+
+**Realistic ceiling with the environment as-is:** 44/60 shipped with 3.66x geomean.
+
+**Realistic ceiling after 1 GPU-day of library-install work per §7.4:** likely **50–52/60 shipped with 3.8–4.5x geomean**. This is a rough estimate — I don't have measurements for the untested paths. The reviewer should treat this range as a hypothesis, not a promise.
+
+**What would be needed to justify the strong "SOTA exhausted" claim:** each task in §5.1 rerun with each library in §7.4 that plausibly applies (per the "untried candidate" column). Approximately 40 additional per-task benchmarks. Achievable but not done here.
 
 ---
 
@@ -386,14 +469,17 @@ The claim is scoped:
 
 I would suggest reviewing in this order:
 
-1. **Sample 3 shipped baselines** — one from each of `Quant/003` (highest speedup, simplest FP8 pattern), `L2/054` (highest L2 speedup, uses FlashInfer layernorm), and `L1/021` (adaptive strategy). Verify the code matches the pattern I described and passes locally.
-2. **Read §5 (Uncovered tasks)** carefully. Decide per-task whether to accept the negative disposition or ask for a re-attempt.
-3. **Read §8 (Known risks)** to make sure my caveats are acceptable.
-4. **Spot-check the aggregate results:** `cd ~/sol-execbench && uv run python ../sol-baseline/scripts/aggregate_contest.py --output /tmp/re-check.md` and diff against `~/sol-baseline/docs/CONTEST_RESULTS.md`. Should be identical up to normal timing variance.
-5. **Approve or request changes** — I can:
-   - Re-attempt any negative task with a specific library (name the library).
+1. **Read §7 (environment audit) first.** The venv is currently missing `flash_attn` because of the failed FlashInfer 0.6.13 upgrade recovery. Two shipped baselines (L1/092, L2/009) will fail to import until it's restored. Before spot-checking anything else, run `uv pip install flash-attn==2.8.3 --no-build-isolation`.
+2. **Sample 3 shipped baselines** — one from each of `Quant/003` (highest speedup, simplest FP8 pattern), `L2/054` (highest L2 speedup, uses FlashInfer layernorm), and `L1/021` (adaptive strategy). Verify the code matches the pattern I described and passes locally.
+3. **Read §5 (Uncovered tasks)** carefully — especially the per-task "untried candidate" table. Decide per-task whether to accept the negative disposition or ask for a re-attempt with a specific library from §7.4.
+4. **Read §8 (Known risks)** to make sure my caveats are acceptable.
+5. **Spot-check the aggregate results (after step 1):** `cd ~/sol-execbench && uv run python ../sol-baseline/scripts/aggregate_contest.py --output /tmp/re-check.md` and diff against `~/sol-baseline/docs/CONTEST_RESULTS.md`. Should be identical up to normal timing variance.
+6. **Approve or request changes** — I can:
+   - Restore the venv (`flash_attn` + `causal_conv1d` + `liger_kernel`) and re-run the aggregator, or
+   - Write DeepGEMM Contest wrappers (already installed 2.5.0 and BF16-smoke-tested) and re-attempt FIB/020 + L2/012 + Quant/011 — FIB/005 blocked by DeepGEMM's fp16-input rejection, would need cast+GEMM composition, or
+   - Install TransformerEngine and re-attempt L2/002 + L2/004 + L2/019 (fp32-decoder cluster), or
+   - Any specific task's re-attempt with a specific library named by the reviewer.
    - Wire the manual-timing numbers from §3.3 into the aggregator (~1 hr work + ~30 min re-run).
    - Ship correctness-only baselines for the deferred tasks (violates upstream policy — need explicit approval).
-   - Any other reasonable change.
 
-I am confident the work as it stands is honest, complete, and reproducible on the stated environment. All caveats are documented in the tree, not just here.
+I am not claiming completeness of the SOTA search — I am claiming completeness of the *bookkeeping* (every one of 60 tasks has a written disposition) and correctness of the 44 shipped baselines against the reference. All caveats are documented in the tree, not just here.
