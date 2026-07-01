@@ -34,13 +34,14 @@ Of these 60 problems:
 
 | Metric | Value | Population |
 |---|---|---|
-| Correctness pass rate | 44/44 baselines, ≈595/595 workloads across those 44 | full Contest coverage |
+| Correctness pass rate | 44/44 baselines, 757/757 workloads (33 tasks × 16 workloads is typical; smaller counts 8/9/13/14/15 exist and 4 attention wrapper tasks have 21/38/47/48) | full Contest coverage |
 | Geometric mean speedup vs reference | **3.66x** | 31 timed baselines (see §3.3 for the 13 correctness-only ones) |
+| Arithmetic mean speedup | 5.67x | 31 timed baselines (skewed by 29.83x outlier) |
 | Peak speedup | **29.83x** | Quant/015 FP8 MLA output projection |
-| Median speedup | ~2.02x | 31 timed baselines |
-| Baselines ≥5x | 8 | Quant/003, 005, 015; FIB/002, 003, 023, 026; L1/049, L1/069; L2/054 |
-| Baselines 2x–5x | 12 | mostly attention + MoE forward blocks |
-| Baselines 1.0x–2x | 11 | RoPE, small compositions, adaptive baselines |
+| Median speedup | **2.78x** | 31 timed baselines |
+| Baselines ≥5x | 10 | FIB/002, 003, 023, 026; L1/049, 069; L2/054; Quant/003, 005, 015 |
+| Baselines 2x–<5x | 10 | mostly attention + fused MLP blocks |
+| Baselines 1x–<2x | 11 | RoPE, small compositions, adaptive baselines |
 
 ---
 
@@ -89,7 +90,15 @@ For the 13 `fast`-only tasks, I ran a standalone perf harness at development tim
 
 ### 3.4 Reproducibility
 
-- `scripts/aggregate_contest.py` — discovers all 44 baselines, runs them, emits the Markdown table. Regenerating the results is a single command: `python scripts/aggregate_contest.py --output docs/CONTEST_RESULTS.md` from the `sol-execbench` root (with `FLASHINFER_TRACE_DIR` set — script does this automatically now).
+- `scripts/aggregate_contest.py` — discovers all 44 baselines, runs them, emits the Markdown table. The script assumes the sol-baseline repo is checked out **alongside** sol-execbench (typical: `~/sol-execbench/` and `~/sol-baseline/`) and is run from `sol-execbench/` so that `data/benchmark/Contest/` resolves. Invocation:
+
+  ```bash
+  cd ~/sol-execbench
+  uv run python ../sol-baseline/scripts/aggregate_contest.py \
+      --output ../sol-baseline/docs/CONTEST_RESULTS.md
+  ```
+
+  The script sets `FLASHINFER_TRACE_DIR` (to the absolute path of `data/flashinfer-trace/`) automatically. If your sol-baseline lives elsewhere, adjust both paths.
 - End-to-end wall time on B200: **~90 min** (dominated by L1/023 multimodal mrope and L2/013 Qwen3-Next MoE, both of which do CPU-heavy work in the reference).
 - Every baseline is a single self-contained `solution.json`; no build dependencies beyond the environment listed in §0.
 
@@ -284,7 +293,8 @@ These are things I stepped in during development. They are permanent gotchas for
 - **`docs/CONTEST_NEGATIVE_RESULTS.md`** — All 13 documented negatives + failed 0.6.13 upgrade + L2/006 deferred rationale.
 - **`docs/library_index.json`** — Kernel × dtype × SM compatibility matrix with anti-patterns + FlashInfer 0.6.13 recovery recipe.
 - **`scripts/aggregate_contest.py`** — Single-command regeneration of CONTEST_RESULTS.md.
-- **`scripts/bench_config{,_fast,_quick}.json`** — Three benchmark configurations (used explicitly per task by the aggregator).
+- **`scripts/bench_config.json`** and **`scripts/bench_config_fast.json`** — Two benchmark configurations wired into the aggregator (25w/100iter + `benchmark_reference=True` for `full`; 5w/10iter + `benchmark_reference=False` for `fast`).
+- **`scripts/bench_config_quick.json`** — Intermediate configuration (5w/20iter, `benchmark_reference=True`) staged in the repo but **not** wired into the aggregator. Available for one-shot re-runs if a reviewer wants reference-timed numbers on a task that the aggregator currently runs in `fast` mode. See §8.1.
 - **`scripts/verify.py`** — Extended for `Contest/{lib}/Contest/{task}` 3-level path.
 - **`scripts/run_contest.sh`** — Legacy per-task runner (list-mode; superseded by aggregate script but kept for surgical re-runs).
 
@@ -379,7 +389,7 @@ I would suggest reviewing in this order:
 1. **Sample 3 shipped baselines** — one from each of `Quant/003` (highest speedup, simplest FP8 pattern), `L2/054` (highest L2 speedup, uses FlashInfer layernorm), and `L1/021` (adaptive strategy). Verify the code matches the pattern I described and passes locally.
 2. **Read §5 (Uncovered tasks)** carefully. Decide per-task whether to accept the negative disposition or ask for a re-attempt.
 3. **Read §8 (Known risks)** to make sure my caveats are acceptable.
-4. **Spot-check the aggregate results:** `python scripts/aggregate_contest.py --output /tmp/re-check.md` and diff against `docs/CONTEST_RESULTS.md`. Should be identical up to normal timing variance.
+4. **Spot-check the aggregate results:** `cd ~/sol-execbench && uv run python ../sol-baseline/scripts/aggregate_contest.py --output /tmp/re-check.md` and diff against `~/sol-baseline/docs/CONTEST_RESULTS.md`. Should be identical up to normal timing variance.
 5. **Approve or request changes** — I can:
    - Re-attempt any negative task with a specific library (name the library).
    - Wire the manual-timing numbers from §3.3 into the aggregator (~1 hr work + ~30 min re-run).
