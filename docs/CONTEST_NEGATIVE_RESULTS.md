@@ -34,6 +34,24 @@ h=16384, inter=53248. FlashInfer rmsnorm + cat-fused gate/up + silu_and_mul vs r
 
 Qwen-Image-Edit fp32 decoder with 3D mrope. FA2 is bf16-only so we use F.scaled_dot_product_attention (cuDNN backend) — **0.99x**. Same conclusion as L2/002 (fp32 reference already calls fused cuDNN kernels). Removed.
 
+## FlashInfer 0.6.13 upgrade attempt — broken cutlass_dsl API compat
+
+Tried `flashinfer-python==0.6.13` (24 Jun 2026, latest stable) to see if MoE paths (`cutlass_fused_moe` bf16, `trtllm_fp8_block_scale_moe`) are fixed on SM100. Install succeeds but **any `import flashinfer` fails immediately**:
+
+```
+File ".../flashinfer/gemm/kernels/grouped_gemm_masked_blackwell.py", line 2383,
+    in Sm100BlockScaledPersistentDenseGemmKernel
+    a_major_mode: cute.nvgpu.OperandMajorMode,
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'cutlass.cute.nvgpu' has no attribute 'OperandMajorMode'
+```
+
+The Blackwell blockscaled kernel file references `cute.nvgpu.OperandMajorMode` from cutlass-dsl 4.4.x, but 0.6.13's pyproject requires `nvidia-cutlass-dsl>=4.5.0`, and 4.5.x renamed that symbol. The two pinned deps are mutually incompatible. Downgrade also blocked: `flashinfer 0.6.12 → cutlass-dsl>=4.5.0` in metadata even though 4.4.1 is what actually works.
+
+**Recovered by:** `uv sync --all-groups` + reinstall `flashinfer-python==0.6.12 --no-deps` + pin `nvidia-cusparselt-cu13` (0.8→0.9.1) + `nvidia-nvshmem-cu13` (3.3→3.7.1) + `pynvml`.
+
+Wait for a 0.6.14 / 0.7.0 that resolves the cutlass-dsl split, or build FlashInfer from source pinning cutlass-dsl==4.4.1 (out of scope for this environment). MoE remains covered by sort+per-expert `torch.mm` for now.
+
 ## Contest/L2/006 — multimodal mrope position calculation: CPU-control-flow dominates
 
 Per-batch Python state machine over input_ids: `attention_mask_bool`, `torch.argwhere`, then for each (image, video) block: `input_tokens.tolist()` + `input_tokens.index(token_id, st)` + per-grid `t.item()/h.item()/w.item()` + position-id concatenation. The reference's CPU runtime dominates the per-call cost, and a faithful rewrite still has to honor the sequential state (start-of-next-block depends on end-of-previous-block + grid_thw size). Tried; the small (≤30%) speedup from batching `.index()` lookups with a single `torch.where` doesn't justify the regression risk on diverse vision-token layouts. Deferred.

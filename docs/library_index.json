@@ -10,6 +10,8 @@
   "libraries": {
     "flashinfer": {
       "version": "0.6.12",
+      "_upgrade_note": "flashinfer 0.6.13 (Jun 24 2026) is BROKEN on install: pyproject requires cutlass-dsl>=4.5.0 but the Blackwell blockscaled_gemm module references cute.nvgpu.OperandMajorMode which was renamed in cutlass-dsl 4.5.x. Any `import flashinfer` immediately raises AttributeError. Stay on 0.6.12 until 0.6.14+ resolves the split.",
+      "_recovery_recipe": "If you accidentally installed 0.6.13: (1) `uv sync --all-groups` to restore torch/triton; (2) `uv pip install flashinfer-python==0.6.12 --no-deps`; (3) `uv pip install --force-reinstall nvidia-cusparselt-cu13 nvidia-nvshmem-cu13`; (4) `uv pip install pynvml`.",
       "kernels": {
         "norm.rmsnorm": {
           "input_dtype": ["bfloat16", "float16"],
