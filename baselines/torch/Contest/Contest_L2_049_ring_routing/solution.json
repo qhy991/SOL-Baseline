@@ -1,0 +1,22 @@
+{
+  "name": "torch_contest_l2_049_ring_routing",
+  "definition": "049_group_limited_topk_routing",
+  "author": "torch",
+  "description": "Ring-flash group-limited topk routing (E=256, 8 groups, top-4 groups, top-8 experts). Same vectorized chain as reference but keeps the router GEMM in bf16 (cuBLAS does fp32 accumulation internally) — saves the explicit fp32 cast on weight + activations.",
+  "spec": {
+    "languages": [
+      "pytorch"
+    ],
+    "target_hardware": [
+      "LOCAL"
+    ],
+    "entry_point": "baseline.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "baseline.py",
+      "content": "import torch\nimport torch.nn.functional as F\n\nN_EXPERTS = 256\nTOP_K = 8\nN_GROUP = 8\nTOPK_GROUP = 4\nEXPERTS_PER_GROUP = 32\n\n\n@torch.no_grad()\ndef run(hidden_states, weight, expert_bias, routed_scaling_factor):\n    M = hidden_states.shape[0]\n    logits = F.linear(hidden_states, weight).float()      # bf16 GEMM, fp32 result\n    scores = torch.sigmoid(logits)\n    scores_for_routing = scores + expert_bias.float()\n\n    grp = scores_for_routing.view(M, N_GROUP, EXPERTS_PER_GROUP)\n    group_scores = torch.topk(grp, k=2, dim=-1)[0].sum(dim=-1)\n    group_idx = torch.topk(group_scores, k=TOPK_GROUP, dim=-1, sorted=False)[1]\n    group_mask = torch.zeros_like(group_scores)\n    group_mask.scatter_(1, group_idx, 1.0)\n    score_mask = group_mask.unsqueeze(-1).expand(M, N_GROUP, EXPERTS_PER_GROUP).reshape(M, N_EXPERTS).bool()\n\n    neg_inf = torch.finfo(torch.float32).min\n    masked = scores_for_routing.masked_fill(~score_mask, neg_inf)\n    topk_idx = torch.topk(masked, k=TOP_K, dim=-1, sorted=False)[1]\n    selected = torch.gather(scores, 1, topk_idx)\n    topk_weight = selected / (selected.sum(dim=-1, keepdim=True) + 1e-20)\n    return topk_idx, topk_weight * routed_scaling_factor\n"
+    }
+  ]
+}

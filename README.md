@@ -2,7 +2,12 @@
 
 SOTA GPU kernel library baselines for [sol-execbench](https://github.com/NVIDIA/sol-execbench) benchmark evaluation.
 
-**All 44 baselines in this repo are verified to be faster than the torch reference implementation**, with measured speedups ranging from **1.04x to 7.21x**.
+This repo ships two baseline sets:
+
+- **L1/L2/FlashInfer-Bench (upstream)**: 44 baselines, 1.04x – 7.21x on RTX 4090 / H100 / A100.
+- **Contest** (new): 44 additional baselines targeting the latest DeepSeek-V3 / Qwen3-VL / Kimi-K2 / Gemma-3 / Nemotron / gpt-oss / GLM-4 / Reka / Olmo-3 / Ring / Ling / Llama-3.2-Vision tasks. Validated on **NVIDIA B200 (SM 100, Blackwell)** with speedups up to **30x** (FP8 MLA o-proj). See [`docs/CONTEST.md`](docs/CONTEST.md), [`docs/CONTEST_RESULTS.md`](docs/CONTEST_RESULTS.md) for the full table and [`docs/library_index.json`](docs/library_index.json) for kernel × dtype × SM compatibility.
+
+**All baselines in this repo are verified to be faster than the torch reference implementation.**
 
 ## What This Repo Provides
 

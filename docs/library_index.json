@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "_about": "Compatibility matrix for SOTA libraries used by sol-baseline. Each entry documents the dtype, shape, GPU SM, and tolerance constraints learned by hands-on use during Contest baseline development. Use this BEFORE writing a new wrapper to avoid library-mismatch RUNTIME_ERROR.",
+  "env_validated": {
+    "gpu": "NVIDIA B200 (SM 100, Blackwell)",
+    "cuda": "13.0",
+    "torch": "2.9.0+cu130",
+    "triton": "3.5.0"
+  },
+  "libraries": {
+    "flashinfer": {
+      "version": "0.6.12",
+      "kernels": {
+        "norm.rmsnorm": {
+          "input_dtype": ["bfloat16", "float16"],
+          "input_shape": "(M, hidden_size) — must be contiguous, 2D only",
+          "weight_dtype": "same as input",
+          "weight_shape": "(hidden_size,)",
+          "supported_sm": [80, 86, 89, 90, 100, 120],
+          "notes": "For per-head norm, reshape Q/K (B, S, n_heads, head_dim) to (B*S*n_heads, head_dim) first."
+        },
+        "norm.fused_add_rmsnorm": {
+          "destination_passing_style": true,
+          "mutates": ["input", "residual"],
+          "notes": "In-place — call rmsnorm(residual+input) instead when you need a pure-function semantics."
+        },
+        "norm.layernorm": {
+          "input_dtype": ["bfloat16"],
+          "input_shape": "(M, hidden_size) — 2D contiguous",
+          "weight_dtype": "float32 (call .float().contiguous() on bf16 weights)",
+          "bias_dtype": "float32",
+          "supported_sm": [80, 86, 89, 90, 100, 120]
+        },
+        "activation.silu_and_mul": {
+          "input_dtype": ["bfloat16", "float16"],
+          "input_shape": "(M, 2*hidden_size) — 2D contiguous; 3D input dispatches FAIL with 'Check failed: (false) is false' on SM100",
+          "output_shape": "(M, hidden_size)",
+          "supported_sm": [80, 86, 89, 90, 100, 120],
+          "notes": "Wrap with x.reshape(-1, 2*inter).contiguous() before calling, then .view(b, s, inter) after."
+        },
+        "activation.gelu_tanh_and_mul": {
+          "input_dtype": ["bfloat16", "float16"],
+          "input_shape": "(M, 2*hidden_size) — 2D contiguous",
+          "notes": "Same dispatch constraint as silu_and_mul."
+        },
+        "gemm.gemm_fp8_nt_groupwise": {
+          "purpose": "DeepSeek-V3 / Qwen3-VL FP8 path (BlockWise1x128 act / BlockWise128x128 weight)",
+          "input_dtype": "float8_e4m3fn",
+          "scale_dtype": "float32",
+          "scale_granularity_mnk": "(1, 128, 128) is the only DS recipe; other granularities exist for other recipes",
+          "scale_layout_MN": {
+            "a_scale": "(K // 128, M)",
+            "b_scale": "(K // 128, N // 128)",
+            "notes": "Both must be .t().contiguous() from natural (M, K/128) / (N/128, K/128) compute order."
+          },
+          "supported_sm": [100, 120],
+          "wrong_alternative": "gemm.gemm_fp8_nt_blockscaled hardcodes (128,128,128) granularity — DOES NOT support DeepSeek's 1x128 act recipe."
+        },
+        "gemm.mm_M1_16_K7168_N256": {
+          "purpose": "DeepSeek-V3 router gemm (specialized for routing GEMM shape)",
+          "input_dtype": "bfloat16 row-major (a) + bfloat16 column-major (b)",
+          "M_range": "1..16 (decode-only)",
+          "output_dtype": "float32",
+          "supported_sm": [90, 100, 120],
+          "warning": "fp16 inputs require cast to bf16; on small-M the cast + persistent-launch warmup beats cuBLAS only if you skip the cast. Not worth using when input is already fp16."
+        },
+        "fused_moe.trtllm_fp8_block_scale_moe": {
+          "status": "BROKEN on B200 (SM100) in 0.6.12 — autotunes or hits unimplemented sm_100 path; calls do not return.",
+          "tried": "Contest/FIB/020 (DeepSeekV3 routing, E=256 top-8). Hung >3 min on synthetic 128-token input.",
+          "alternative": "Use sort+per-expert torch.mm or wait for FlashInfer update / DeepEP."
+        },
+        "fused_moe.cutlass_fused_moe": {
+          "status": "BROKEN on B200 (SM100) bf16 path — same hang as trtllm_fp8_block_scale_moe.",
+          "tried": "Contest/L1/044 (DeepSeek-V3 bf16, E=256 top-8). Hung >5 min.",
+          "alternative": "sort-by-expert + per-expert torch.mm (see baselines/torch/Contest/Contest_L1_044_moe_sorted)."
+        },
+        "mla.BatchMLAPagedAttentionWrapper": {
+          "purpose": "DeepSeek-V3 MLA paged attention (decode + prefill)",
+          "supported_sm": [80, 86, 89, 90, 100],
+          "plan_args": {
+            "qo_indptr": "decode: arange(B+1); prefill: from input",
+            "kv_indptr": "from input",
+            "kv_indices": "from input",
+            "kv_len_arr": "kv_indptr[1:] - kv_indptr[:-1] (int32)"
+          },
+          "lse_convention": "base-2 by default (matches FIB reference's `logsumexp / log(2)`). Use return_lse_base_on_e=True for ln."
+        },
+        "BatchDecodeWithPagedKVCacheWrapper": {
+          "supported_sm": [80, 86, 89, 90, 100],
+          "lse_convention": "base-2 by default — do NOT divide by log(2) again."
+        },
+        "BatchPrefillWithRaggedKVCacheWrapper": {
+          "supported_sm": [80, 86, 89, 90, 100],
+          "plan_args": "qo_indptr, kv_indptr, num_qo_heads, num_kv_heads, head_dim_qk, head_dim_vo, causal, sm_scale",
+          "lse_convention": "base-2"
+        }
+      },
+      "env_vars": {
+        "FLASHINFER_TRACE_DIR": "Required when running FIB benchmarks; points to the unpacked flashinfer-trace blob directory (e.g. data/flashinfer-trace). Without this, kv_indptr/kv_indices safetensors don't resolve."
+      }
+    },
+    "flash_attn": {
+      "version": "2.8.3",
+      "kernels": {
+        "flash_attn_func": {
+          "input_dtype": ["bfloat16", "float16"],
+          "fp32_support": false,
+          "input_shape": "q: (B, S, Hq, D); k/v: (B, S, Hkv, D) — native GQA via asymmetric head counts (no expand needed)",
+          "head_dim_supported": [64, 96, 128, 192, 256],
+          "supports": ["causal", "sliding window", "softcap", "alibi"],
+          "supported_sm": [80, 86, 89, 90, 100],
+          "notes": "For fp32 attention, fall back to F.scaled_dot_product_attention (cuDNN backend)."
+        }
+      }
+    },
+    "liger_kernel": {
+      "version": "0.8.0",
+      "kernels": {
+        "geglu / swiglu": {
+          "input_dtype": ["bfloat16", "float16"],
+          "supported_sm": [80, 86, 89, 90, 100],
+          "notes": "Liger 0.8 LigerRMSNorm/LigerSiLUMulFunction has PyTorch 2.9 .distributed.tensor compat issue — use FlashInfer rmsnorm / direct swiglu_forward instead."
+        }
+      }
+    },
+    "causal_conv1d": {
+      "version": "1.6.2.post1",
+      "kernels": {
+        "causal_conv1d_fn": {
+          "input_dtype": ["bfloat16", "float16"],
+          "supported_sm": [80, 86, 89, 90, 100],
+          "weight_shape": "(dim, width) — squeeze (dim, 1, width) input"
+        }
+      }
+    },
+    "torch_native": {
+      "version": ">=2.9",
+      "kernels": {
+        "F.scaled_dot_product_attention": {
+          "input_dtype": ["bfloat16", "float16", "float32"],
+          "fp32_path": "cuDNN backend — the ONLY SDPA option for fp32; matches reference's manual matmul-softmax-matmul",
+          "supports": ["is_causal", "attn_mask (additive)", "enable_gqa (PyTorch 2.5+)", "scale"],
+          "notes": "enable_gqa=True is essential for asymmetric head counts. Combine attn_mask + enable_gqa for varlen vision attention."
+        },
+        "F.rms_norm": {
+          "available_since": "2.4",
+          "fp32_support": true,
+          "notes": "On B200, F.rms_norm + cuDNN backend matches FlashInfer rmsnorm performance for fp32 (no speedup), so prefer it for fp32 paths."
+        }
+      }
+    }
+  },
+  "decision_matrix": {
+    "_format": "When you need X, use Y (constraints).",
+    "RMSNorm bf16 hidden=any": "flashinfer.norm.rmsnorm (reshape to 2D contiguous)",
+    "RMSNorm fp32": "F.rms_norm (FlashInfer is bf16-only)",
+    "Q/K per-head RMSNorm": "flashinfer.rmsnorm with x.reshape(-1, head_dim)",
+    "Q/K full-dim RMSNorm": "flashinfer.rmsnorm with x.reshape(-1, n_heads * head_dim) BEFORE reshape-to-heads",
+    "SwiGLU activation bf16": "torch.cat([gate, up], dim=-1).reshape(-1, 2*inter).contiguous() -> flashinfer.activation.silu_and_mul -> .view(b, s, inter)",
+    "GELU-tanh + mul bf16": "flashinfer.activation.gelu_tanh_and_mul (same shape constraint)",
+    "Causal GQA attention bf16": "flash_attn.flash_attn_func(q, k, v, causal=True)",
+    "Custom-mask GQA bf16": "F.scaled_dot_product_attention(attn_mask=mask, enable_gqa=True)",
+    "fp32 attention": "F.scaled_dot_product_attention (cuDNN); FA2 won't work",
+    "FP8 DS-style GEMM (1x128 act, 128x128 weight)": "flashinfer.gemm.gemm_fp8_nt_groupwise(scale_granularity_mnk=(1,128,128), scale_major_mode='MN')",
+    "MLA paged decode bf16": "flashinfer.mla.BatchMLAPagedAttentionWrapper (qo_indptr=arange(B+1))",
+    "MLA paged prefill bf16": "Same wrapper with causal=True and qo_indptr from input",
+    "GQA paged decode bf16": "flashinfer.BatchDecodeWithPagedKVCacheWrapper (last_page_len=ones)",
+    "GQA ragged prefill bf16": "flashinfer.BatchPrefillWithRaggedKVCacheWrapper",
+    "Sparse MoE bf16 expert forward": "sort-by-expert + per-expert torch.mm (FlashInfer cutlass_fused_moe broken on B200)",
+    "FP8 MoE": "Not viable on B200 with FlashInfer 0.6.12; wait for newer release or use DeepEP",
+    "Causal 1D conv bf16": "causal_conv1d.causal_conv1d_fn (squeeze weight dim 1)"
+  },
+  "anti_patterns": {
+    "data_ptr_caching": "NEVER key cached quant outputs on tensor.data_ptr() — PyTorch allocator reuses addresses across eval calls, causing stale fp8 buffers to leak. Always re-quantize per call or key on (shape, dtype, device).",
+    "fused_add_rmsnorm_inplace": "flashinfer.fused_add_rmsnorm mutates BOTH input and residual in-place. Either clone first or use rmsnorm(residual+x) when you need pure-function semantics.",
+    "silu_and_mul_3d": "FlashInfer activation kernels DO NOT accept 3D input despite the docstring claim. Always reshape to 2D first.",
+    "fa2_fp32": "flash_attn_func requires bf16/fp16 — fp32 inputs error with 'FlashAttention only support fp16 and bf16 data type'. Use F.sdpa fallback.",
+    "fp32_decoder_optimization": "fp32 transformer decoder blocks are already SOTA via F.rms_norm + cuDNN SDPA + F.silu codegen; expect ~1.00x. Skip.",
+    "tolist_in_loops": "x.tolist() forces full CPU-GPU sync. In RoPE / index-building loops, use torch.cat(list_of_gpu_tensors) instead — 3x faster.",
+    "broadcast_matmul_memory_illusion": "(1,T,H) @ (E,H,D) broadcast matmul does NOT save replication memory — cuBLAS materializes the broadcast internally. Use the explicit replicated form for clarity."
+  }
+}

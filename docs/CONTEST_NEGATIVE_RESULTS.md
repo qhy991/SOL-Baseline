@@ -34,9 +34,9 @@ h=16384, inter=53248. FlashInfer rmsnorm + cat-fused gate/up + silu_and_mul vs r
 
 Qwen-Image-Edit fp32 decoder with 3D mrope. FA2 is bf16-only so we use F.scaled_dot_product_attention (cuDNN backend) — **0.99x**. Same conclusion as L2/002 (fp32 reference already calls fused cuDNN kernels). Removed.
 
-## Contest/L2/006 + L2/049 — not attempted
+## Contest/L2/006 — multimodal mrope position calculation: CPU-control-flow dominates
 
-L2/006 is per-batch Python loops over image/video token indices for multimodal mrope position IDs — workload-specific structure makes any rewrite fragile and the reference's CPU-control-flow dominates the GPU work. L2/049 is purely vectorized routing math (router GEMM + sigmoid + group topk + mask + final topk + normalize) — every stage is already a single CUDA kernel. Both deferred.
+Per-batch Python state machine over input_ids: `attention_mask_bool`, `torch.argwhere`, then for each (image, video) block: `input_tokens.tolist()` + `input_tokens.index(token_id, st)` + per-grid `t.item()/h.item()/w.item()` + position-id concatenation. The reference's CPU runtime dominates the per-call cost, and a faithful rewrite still has to honor the sequential state (start-of-next-block depends on end-of-previous-block + grid_thw size). Tried; the small (≤30%) speedup from batching `.index()` lookups with a single `torch.where` doesn't justify the regression risk on diverse vision-token layouts. Deferred.
 
 ## Contest/L1/063_attention_output_reshape_and_projection — pure cuBLAS, reference optimal
 

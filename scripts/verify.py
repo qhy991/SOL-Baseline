@@ -34,7 +34,10 @@ def main():
         print("ERROR: baselines directory not found. Run from sol-execbench root.")
         sys.exit(1)
 
-    solutions = list(baseline_dir.glob("*/*/solution.json"))
+    # Match both depth-2 ({lib}/{task}/solution.json) and depth-3
+    # ({lib}/Contest/{task}/solution.json) layouts.
+    solutions = sorted(set(baseline_dir.glob("*/*/solution.json")) |
+                       set(baseline_dir.glob("*/*/*/solution.json")))
     print(f"Found {len(solutions)} baseline solutions\n")
 
     passed = 0
